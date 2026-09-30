@@ -12,5 +12,5 @@
     "declaration": false,
     "types": ["node", "jest"]
   },
-  "include": ["src", "test", "prisma", "prisma.config.ts"]
+  "include": ["src", "test", "prisma", "scripts", "prisma.config.ts"]
 }

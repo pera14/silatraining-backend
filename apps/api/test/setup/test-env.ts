@@ -16,7 +16,8 @@ export const TEST_ENV: Record<string, string> = {
   S3_ACCESS_KEY: 'test',
   S3_SECRET_KEY: 'test-secret',
   S3_REGION: 'us-east-1',
-  SMTP_HOST: 'localhost',
-  SMTP_PORT: '1025',
+  // emails are captured by FakeMailer; log transport means nothing ever tries SMTP
+  SMTP_HOST: '',
+  MAIL_TRANSPORT: 'log',
   MAIL_FROM: 'SILA Training <no-reply@sila.test>',
 };

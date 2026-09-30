@@ -37,7 +37,8 @@
     "dev": "tsup --watch",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:clean": "rm -rf dist && tsup"
   },
   "dependencies": {
     "zod": "^4.6.0"

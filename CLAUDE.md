@@ -18,19 +18,23 @@ Internal paths match the spec (`apps/api/src/modules/...`), so SPEC §8/§9 prom
 
 ## Commands (repo root)
 
-| Command                                        | What                                                                                                                  |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`                                 | install (Node 22, pnpm 10)                                                                                            |
-| `pnpm dev`                                     | Docker infra (Postgres 16 :5433, MinIO :9000/:9001, Mailpit :8025) → build contracts → migrate → API on :3000 (watch) |
-| `pnpm db:seed`                                 | wipe + seed dev data (prints logins + join URLs; password `Sila-dev-2026!`)                                           |
-| `pnpm lint` / `pnpm typecheck` / `pnpm format` | static checks                                                                                                         |
-| `pnpm test`                                    | unit tests (contracts: Vitest, api: Jest)                                                                             |
-| `pnpm test:e2e`                                | API e2e: Supertest against Postgres 16 in **Testcontainers** (Docker must run)                                        |
-| `pnpm start:e2e`                               | infra + migrate + seed + build + start (used by the frontend's real-stack Playwright)                                 |
-| `pnpm infra:up` / `infra:down`                 | dev containers only                                                                                                   |
+| Command                                        | What                                                                                                                                                     |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                 | install (Node 22, pnpm 10)                                                                                                                               |
+| `pnpm db:setup`                                | **once**: creates role `sila` + databases `sila` / `sila_test` in your local PostgreSQL 16 (e.g. `brew services start postgresql@16`). No Docker needed. |
+| `pnpm dev`                                     | build contracts → migrate → contracts watcher + API on :3000 (watch), against local Postgres                                                             |
+| `pnpm dev:docker`                              | optional: same, but Postgres/MinIO/Mailpit in Docker (`infra/docker-compose.dev.yml`)                                                                    |
+| `pnpm db:seed`                                 | wipe + seed dev data (prints logins + join URLs; password `Sila-dev-2026!`)                                                                              |
+| `pnpm lint` / `pnpm typecheck` / `pnpm format` | static checks                                                                                                                                            |
+| `pnpm test`                                    | unit tests (contracts: Vitest, api: Jest)                                                                                                                |
+| `pnpm test:e2e`                                | API e2e (Supertest). Uses `TEST_DATABASE_URL` (local `sila_test`, schema reset each run); if unset, Postgres 16 in Testcontainers (CI)                   |
+| `pnpm start:e2e`                               | migrate + seed + build + start (used by the frontend's real-stack Playwright; no Docker)                                                                 |
+| `pnpm infra:up` / `infra:down`                 | optional Docker containers only                                                                                                                          |
 
-API docs (dev): http://localhost:3000/api/docs · health: `/api/health` · mail UI: http://localhost:8025.
-Parallel worktrees: give each its own `PORT` (A 3100, B 3200) and DB name (`sila_a`, `sila_b`) in `.env`.
+API docs (dev): http://localhost:3000/api/docs · health: `/api/health`.
+**Emails:** with `SMTP_HOST` empty (default locally) `MAIL_TRANSPORT=log` prints every email, e.g. the password-reset link,
+to the API console. Set `SMTP_HOST`/`SMTP_PORT` to really send (production refuses log mode).
+Parallel worktrees: give each its own `PORT` (A 3100, B 3200) and database (`createdb -O sila sila_a`, `sila_b`) in `.env`.
 
 ## Rules for every agent
 
@@ -95,6 +99,8 @@ Login/register/accept/forgot/reset are limited to `AUTH_RATE_LIMIT` per minute p
 - Prisma 7: client is generated to `apps/api/src/generated/prisma` (git-ignored; `pnpm install` / `db:generate` creates it).
   Import from `../generated/prisma/client`. Driver adapter `@prisma/adapter-pg`. Config in `apps/api/prisma.config.ts`.
 - Jest needs `NODE_OPTIONS=--experimental-vm-modules` (already in the scripts): Prisma's WASM compiler uses dynamic import.
-- MinIO: upstream images are gone from Docker Hub; compose uses the maintained fork `pgsty/minio` / `pgsty/mc`.
+- Contracts are built with `clean: false` on purpose: the API type-checks against `dist/` while the watcher rebuilds, and an
+  emptied `dist/` causes TS7016 in `nest --watch`. `pnpm --filter @sila/contracts build:clean` for a from-scratch build.
+- MinIO (only with `dev:docker`; Agent B's storage will need it or a local alternative): upstream images are gone from Docker Hub; compose uses the maintained fork `pgsty/minio` / `pgsty/mc`.
 - TypeScript is pinned to 6.0 (typescript-eslint/ts-jest do not support 7 yet).
 - Use `migrate deploy` (`pnpm --filter @sila/api db:migrate`); never `migrate dev` in the parallel phase.

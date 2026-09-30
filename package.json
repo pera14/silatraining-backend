@@ -6,7 +6,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "pnpm infra:up && pnpm --filter @sila/contracts build && pnpm --filter @sila/api db:migrate && pnpm --parallel --filter @sila/contracts --filter @sila/api dev",
+    "db:setup": "pnpm --filter @sila/api db:setup",
+    "dev": "pnpm --filter @sila/contracts build && pnpm --filter @sila/api db:migrate && pnpm --parallel --filter @sila/contracts --filter @sila/api dev",
+    "dev:docker": "pnpm infra:up && DATABASE_URL=postgresql://sila:sila@localhost:5433/sila SMTP_HOST=localhost SMTP_PORT=1025 pnpm dev",
     "infra:up": "docker compose -f infra/docker-compose.dev.yml --env-file .env up -d --wait postgres minio mailpit && docker compose -f infra/docker-compose.dev.yml --env-file .env run --rm minio-init",
     "infra:down": "docker compose -f infra/docker-compose.dev.yml --env-file .env down",
     "build": "pnpm -r build",
@@ -19,7 +21,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",
-    "start:e2e": "pnpm infra:up && pnpm --filter @sila/contracts build && pnpm --filter @sila/api db:migrate && pnpm db:seed && pnpm --filter @sila/api build && AUTH_RATE_LIMIT=1000 pnpm --filter @sila/api start"
+    "start:e2e": "pnpm --filter @sila/contracts build && pnpm --filter @sila/api db:migrate && pnpm db:seed && pnpm --filter @sila/api build && AUTH_RATE_LIMIT=1000 pnpm --filter @sila/api start"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

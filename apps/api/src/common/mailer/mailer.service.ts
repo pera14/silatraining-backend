@@ -10,16 +10,22 @@ export interface MailMessage {
 }
 
 /**
- * Thin SMTP wrapper (Mailpit in dev, Brevo/Postmark in prod). Templates live with their feature
- * (notifications module, Agent B). Sending failures are logged, never thrown into the request, so a mail
- * outage cannot break booking or sign-up.
+ * Thin mail wrapper. `MAIL_TRANSPORT=smtp` sends via SMTP (Brevo/Postmark in prod, Mailpit with dev:docker);
+ * `log` (local dev default when SMTP_HOST is empty) prints each email to the API console instead.
+ * Templates live with their feature (notifications module, Agent B). Sending failures are logged, never
+ * thrown into the request, so a mail outage cannot break booking or sign-up.
  */
 @Injectable()
 export class MailerService {
   private readonly logger = new Logger(MailerService.name);
-  private readonly transport: Transporter;
+  private readonly transport: Transporter | null;
 
   constructor(private readonly config: AppConfig) {
+    if (config.get('MAIL_TRANSPORT') === 'log') {
+      this.transport = null;
+      this.logger.log('MAIL_TRANSPORT=log: emails are printed here instead of being sent');
+      return;
+    }
     const user = config.get('SMTP_USER');
     this.transport = createTransport({
       host: config.get('SMTP_HOST'),
@@ -30,6 +36,12 @@ export class MailerService {
   }
 
   async send(message: MailMessage): Promise<boolean> {
+    if (!this.transport) {
+      this.logger.log(
+        `\n✉  To: ${message.to}\n   Subject: ${message.subject}\n\n${message.text}\n`,
+      );
+      return true;
+    }
     try {
       await this.transport.sendMail({ from: this.config.get('MAIL_FROM'), ...message });
       return true;

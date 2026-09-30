@@ -28,14 +28,23 @@ export const EnvSchema = z.object({
   S3_SECRET_KEY: z.string().min(1),
   S3_REGION: z.string().default('us-east-1'),
 
-  SMTP_HOST: z.string().min(1),
-  SMTP_PORT: z.coerce.number().int().positive(),
+  /** Empty = no SMTP: emails are printed to the API console (MAIL_TRANSPORT=log). */
+  SMTP_HOST: emptyAsUndefined(z.string().min(1).optional()),
+  SMTP_PORT: emptyAsUndefined(z.coerce.number().int().positive().optional()),
   SMTP_USER: z.string().optional().default(''),
   SMTP_PASS: z.string().optional().default(''),
   SMTP_SECURE: bool.default(false),
   MAIL_FROM: z.string().min(3),
+  /** `smtp` sends through SMTP_HOST; `log` prints emails to the console (local dev). Default: log without SMTP_HOST. */
+  MAIL_TRANSPORT: z.enum(['smtp', 'log']).optional(),
 });
-export type Env = z.infer<typeof EnvSchema>;
+export type Env = Omit<z.infer<typeof EnvSchema>, 'MAIL_TRANSPORT'> & {
+  MAIL_TRANSPORT: 'smtp' | 'log';
+};
+
+function emptyAsUndefined<T extends z.ZodType>(schema: T) {
+  return z.preprocess((v) => (v === '' ? undefined : v), schema);
+}
 
 export function validateEnv(raw: Record<string, unknown>): Env {
   const result = EnvSchema.safeParse(raw);
@@ -45,5 +54,17 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${lines}`);
   }
-  return result.data;
+  const env = result.data;
+  const transport = env.MAIL_TRANSPORT ?? (env.SMTP_HOST ? 'smtp' : 'log');
+  if (transport === 'smtp' && (!env.SMTP_HOST || !env.SMTP_PORT)) {
+    throw new Error(
+      'Invalid environment configuration:\n  - MAIL_TRANSPORT=smtp needs SMTP_HOST and SMTP_PORT',
+    );
+  }
+  if (transport === 'log' && env.NODE_ENV === 'production') {
+    throw new Error(
+      'Invalid environment configuration:\n  - production needs real email: set SMTP_HOST/SMTP_PORT (MAIL_TRANSPORT=log is dev-only)',
+    );
+  }
+  return { ...env, MAIL_TRANSPORT: transport };
 }
