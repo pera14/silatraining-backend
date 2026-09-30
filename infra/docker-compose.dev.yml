@@ -1,0 +1,66 @@
+name: sila-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sila
+      POSTGRES_PASSWORD: sila
+      POSTGRES_DB: sila
+    ports:
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sila -d sila']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: pgsty/minio:latest # maintained MinIO fork; upstream stopped publishing images
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-sila}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-sila-minio-secret}
+      # enables SSE-S3 with a static dev key; production uses KMS / a real key (see docs/DEPLOY.md, Prompt E)
+      MINIO_KMS_SECRET_KEY: sila-dev-key:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # one-shot: private bucket with default server-side encryption, no public policy
+  minio-init:
+    image: pgsty/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_USER} $${MINIO_PASS} &&
+      mc mb --ignore-existing local/$${BUCKET} &&
+      mc anonymous set none local/$${BUCKET} &&
+      mc encrypt set sse-s3 local/$${BUCKET} &&
+      echo 'bucket ready'"
+    environment:
+      MINIO_USER: ${S3_ACCESS_KEY:-sila}
+      MINIO_PASS: ${S3_SECRET_KEY:-sila-minio-secret}
+      BUCKET: ${S3_BUCKET:-sila-documents}
+    restart: 'no'
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+
+volumes:
+  pgdata:
+  miniodata:

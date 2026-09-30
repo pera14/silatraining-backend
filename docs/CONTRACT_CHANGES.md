@@ -1,0 +1,9 @@
+# Contract changes
+
+`packages/contracts` is the single source of truth for API shapes. During the parallel phase (agents A–D)
+changes are **additive only**: new endpoints, new optional fields, new error codes. Never rename, remove or
+tighten an existing field. Log every change here, newest first, and rebuild (`pnpm --filter @sila/contracts build`).
+
+| Date       | Agent   | Change                                                                                                                                                                                                                                                                                                                                                                                                                          | Why                                                                                |
+| ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 2026-09-30 | Phase 0 | Initial contracts for every SPEC §5 row. Additions beyond the spec: error codes `SLOT_OVERLAP`, `EMAIL_TAKEN`, `EXTENSION_LIMIT`, `RESET_TOKEN_INVALID` + generic codes; endpoints `PATCH /trainer/profile`, `GET/POST /trainer/calendar-feed(/regenerate)`, `GET /trainer/package-types/:id`, `GET /trainer/exercises/:id`, `GET/PATCH/DELETE /trainer/plans/:id`; `JoinInfo.trainerFirstName`; `ClientHome.hasActivePackage`. | Screens in SPEC §6 need them (profile, iCal link, CRUD detail); clearer UI errors. |

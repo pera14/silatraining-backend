@@ -1,0 +1,388 @@
+// SILA Training — data model (SPEC §3).
+//
+// FROZEN after Phase 0 (tag v0.1-foundation). Parallel agents must not edit this file.
+// Constraints Prisma cannot express (slot length/:00-:30 start/no-overlap exclusion, one live practice
+// per slot, one active join link, one pinned note) and the `package_usage` view live in the raw SQL
+// migration `prisma/migrations/*_constraints_and_views/migration.sql`.
+//
+// Deliberate additions to SPEC §3 (see CLAUDE.md "Schema notes"):
+//   - Session.slotId is nullable with onDelete SetNull, so deleting a slot never erases practice history
+//     (a CANCELLED + practiceReturned=false session still counts as used).
+//   - CalendarFeedToken  (per-trainer iCal token, Agent B)
+//   - NotificationLog    (idempotent one-off emails such as "package expires in 5 days", Agent B)
+//   - Every instant is timestamptz; calendar days (package validity, series range) are `date`.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
+  runtime             = "nodejs"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  TRAINER
+  CLIENT
+}
+
+enum SlotStatus {
+  OPEN
+  LOCKED
+}
+
+enum SessionStatus {
+  BOOKED
+  ATTENDED
+  NO_SHOW
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD
+  OTHER
+}
+
+model User {
+  id           String    @id @default(uuid())
+  role         Role
+  email        String    @unique // stored lower-cased
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  photoUrl     String?
+  consentAt    DateTime? @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  // trainer side
+  clients            TrainerClient[]     @relation("TrainerClientTrainer")
+  joinLinks          JoinLink[]
+  calendarFeedTokens CalendarFeedToken[]
+  slotSeries         SlotSeries[]        @relation("SeriesTrainer")
+  slots              Slot[]              @relation("SlotTrainer")
+  trainerSessions    Session[]           @relation("SessionTrainer")
+  packageTypes       PackageType[]
+  trainerPackages    Package[]           @relation("PackageTrainer")
+  authoredNotes      ClientNote[]        @relation("NoteTrainer")
+  exercises          Exercise[]
+  trainerPlans       Plan[]              @relation("PlanTrainer")
+  uploadedDocuments  Document[]          @relation("DocumentUploader")
+
+  // client side
+  trainerLink     TrainerClient? @relation("TrainerClientClient")
+  reservedSeries  SlotSeries[]   @relation("SeriesReservedFor")
+  reservedSlots   Slot[]         @relation("SlotReservedFor")
+  clientSessions  Session[]      @relation("SessionClient")
+  clientPackages  Package[]      @relation("PackageClient")
+  notesAbout      ClientNote[]   @relation("NoteClient")
+  clientPlans     Plan[]         @relation("PlanClient")
+  clientDocuments Document[]     @relation("DocumentClient")
+
+  // either
+  createdSessions   Session[]       @relation("SessionCreatedBy")
+  cancelledSessions Session[]       @relation("SessionCancelledBy")
+  refreshTokens     RefreshToken[]
+  passwordResets    PasswordReset[]
+}
+
+/// A client belongs to exactly one trainer (clientId is unique).
+model TrainerClient {
+  trainerId  String
+  clientId   String    @unique
+  archivedAt DateTime? @db.Timestamptz(3)
+  joinedAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  trainer User @relation("TrainerClientTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  client  User @relation("TrainerClientClient", fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@id([trainerId, clientId])
+  @@index([trainerId])
+}
+
+/// One active link per trainer (partial unique index in SQL). Only sha256(token) is stored; the raw
+/// token is HMAC(JOIN_TOKEN_SECRET, id) and is re-derived when the trainer views the link.
+model JoinLink {
+  id        String    @id @default(uuid())
+  trainerId String
+  tokenHash String    @unique
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+
+  trainer User @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+
+  @@index([trainerId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Per-trainer iCal feed token (same derivation scheme as JoinLink). Owned by Agent B (calendar-feed).
+model CalendarFeedToken {
+  id        String    @id @default(uuid())
+  trainerId String
+  tokenHash String    @unique
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+
+  trainer User @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+
+  @@index([trainerId])
+}
+
+/// Repeating slots, e.g. Mon+Wed 18:00. Materialized into Slot rows by a nightly cron.
+model SlotSeries {
+  id                  String    @id @default(uuid())
+  trainerId           String
+  weekdays            Int[] // ISO 1=Mon..7=Sun
+  startTime           String // "18:00" or "18:30", APP_TIMEZONE local time
+  validFrom           DateTime  @db.Date
+  validUntil          DateTime? @db.Date // null = open-ended
+  reservedForClientId String?
+  autoBook            Boolean   @default(false)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+
+  trainer           User   @relation("SeriesTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  reservedForClient User?  @relation("SeriesReservedFor", fields: [reservedForClientId], references: [id], onDelete: SetNull)
+  slots             Slot[]
+
+  @@index([trainerId])
+}
+
+model Slot {
+  id                  String     @id @default(uuid())
+  trainerId           String
+  startsAt            DateTime   @db.Timestamptz(3)
+  endsAt              DateTime   @db.Timestamptz(3) // always startsAt + 60 min (CHECK slot_len)
+  status              SlotStatus @default(OPEN)
+  lockReason          String?
+  reservedForClientId String?
+  seriesId            String?
+
+  trainer           User        @relation("SlotTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  reservedForClient User?       @relation("SlotReservedFor", fields: [reservedForClientId], references: [id], onDelete: SetNull)
+  series            SlotSeries? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  sessions          Session[]
+
+  @@index([trainerId, startsAt])
+  @@index([seriesId])
+}
+
+/// A practice: the booking of exactly one slot. At most one non-CANCELLED session per slot (SQL index).
+model Session {
+  id                 String        @id @default(uuid())
+  slotId             String? // nullable only so a slot can be deleted without erasing history
+  trainerId          String
+  clientId           String
+  packageId          String? // null = booked by trainer without package
+  planId             String?
+  startsAt           DateTime      @db.Timestamptz(3)
+  endsAt             DateTime      @db.Timestamptz(3)
+  status             SessionStatus @default(BOOKED)
+  practiceReturned   Boolean       @default(false) // on cancel: practice given back to the package
+  createdById        String
+  cancelledAt        DateTime?     @db.Timestamptz(3)
+  cancelledById      String?
+  attendanceMarkedAt DateTime?     @db.Timestamptz(3)
+  reminderSentAt     DateTime?     @db.Timestamptz(3)
+  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
+
+  slot        Slot?    @relation(fields: [slotId], references: [id], onDelete: SetNull)
+  trainer     User     @relation("SessionTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  client      User     @relation("SessionClient", fields: [clientId], references: [id], onDelete: Cascade)
+  package     Package? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  plan        Plan?    @relation(fields: [planId], references: [id], onDelete: SetNull)
+  createdBy   User     @relation("SessionCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  cancelledBy User?    @relation("SessionCancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+
+  @@index([clientId, startsAt])
+  @@index([trainerId, startsAt])
+  @@index([packageId])
+  @@index([slotId])
+}
+
+/// Catalog entry, e.g. "10 practices / month".
+model PackageType {
+  id             String    @id @default(uuid())
+  trainerId      String
+  name           String
+  practices      Int
+  validityMonths Int       @default(1)
+  priceRsd       Int?
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  trainer  User      @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  packages Package[]
+
+  @@index([trainerId])
+}
+
+/// Practices left are never stored: see the `package_usage` view / PackageUsageService.
+model Package {
+  id                  String         @id @default(uuid())
+  clientId            String
+  trainerId           String
+  packageTypeId       String?
+  name                String
+  totalPractices      Int
+  adjustment          Int            @default(0) // manual +/- with a note in AuditLog
+  validFrom           DateTime       @db.Date
+  validUntil          DateTime       @db.Date // validFrom + 1 month - 1 day
+  extendedUntil       DateTime?      @db.Date // at most validFrom + 5 weeks - 1 day
+  extensionNote       String?
+  extensionApprovedAt DateTime?      @db.Timestamptz(3)
+  priceRsd            Int?
+  paymentStatus       PaymentStatus  @default(UNPAID)
+  paymentMethod       PaymentMethod?
+  paidAt              DateTime?      @db.Timestamptz(3)
+  paymentNote         String?
+  createdAt           DateTime       @default(now()) @db.Timestamptz(3)
+
+  client      User         @relation("PackageClient", fields: [clientId], references: [id], onDelete: Cascade)
+  trainer     User         @relation("PackageTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  packageType PackageType? @relation(fields: [packageTypeId], references: [id], onDelete: SetNull)
+  sessions    Session[]
+
+  @@index([clientId, validFrom])
+  @@index([trainerId])
+}
+
+model ClientNote {
+  id        String   @id @default(uuid())
+  clientId  String
+  trainerId String
+  body      String
+  pinned    Boolean  @default(false) // at most one pinned per client (SQL index)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  client  User @relation("NoteClient", fields: [clientId], references: [id], onDelete: Cascade)
+  trainer User @relation("NoteTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, createdAt])
+}
+
+model Exercise {
+  id          String    @id @default(uuid())
+  trainerId   String
+  name        String
+  category    String?
+  description String?
+  videoUrl    String?
+  archivedAt  DateTime? @db.Timestamptz(3)
+
+  trainer       User           @relation(fields: [trainerId], references: [id], onDelete: Cascade)
+  planExercises PlanExercise[]
+
+  @@index([trainerId])
+}
+
+/// "Plan A", "Plan B". clientId null = template. sortOrder defines the A -> B -> A rotation.
+model Plan {
+  id         String    @id @default(uuid())
+  trainerId  String
+  clientId   String?
+  name       String
+  notes      String?
+  sortOrder  Int       @default(0)
+  archivedAt DateTime? @db.Timestamptz(3)
+
+  trainer   User           @relation("PlanTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  client    User?          @relation("PlanClient", fields: [clientId], references: [id], onDelete: Cascade)
+  exercises PlanExercise[]
+  sessions  Session[]
+
+  @@index([trainerId, clientId])
+}
+
+model PlanExercise {
+  id         String  @id @default(uuid())
+  planId     String
+  exerciseId String
+  sets       Int?
+  reps       String? // "8-10"
+  weight     String?
+  restSec    Int?
+  notes      String?
+  sortOrder  Int     @default(0)
+
+  plan     Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Restrict) // exercises are archived, not deleted
+
+  @@index([planId, sortOrder])
+}
+
+/// Trainer-only private files in the `sila-documents` bucket. s3Key is built from UUIDs, never filenames.
+model Document {
+  id           String    @id @default(uuid())
+  clientId     String
+  uploadedById String
+  s3Key        String    @unique
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  confirmedAt  DateTime? @db.Timestamptz(3)
+  deletedAt    DateTime? @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  client     User @relation("DocumentClient", fields: [clientId], references: [id], onDelete: Cascade)
+  uploadedBy User @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// Deliberately has no foreign keys so the trail survives user/client deletion.
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String
+  action    String // e.g. "document.download", "package.adjust", "session.cancel"
+  entity    String
+  entityId  String
+  meta      Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}
+
+/// Idempotency log for one-off notifications (kind + entity + recipient sent at most once). No FKs.
+model NotificationLog {
+  id          String   @id @default(uuid())
+  kind        String // e.g. "package.expiring"
+  entityId    String
+  recipientId String
+  sentAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([kind, entityId, recipientId])
+}
