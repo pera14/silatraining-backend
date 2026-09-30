@@ -729,10 +729,10 @@ export const endpoints = {
     method: 'POST',
     path: '/trainer/documents/:id/confirm',
     access: 'TRAINER',
-    summary: 'Confirm the object exists after upload',
+    summary: 'Confirm the object exists after upload (size + type must match the request)',
     params: IdParams,
     response: Document,
-    errors: ['NOT_FOUND'],
+    errors: ['NOT_FOUND', 'UPLOAD_INVALID'],
   }),
   'trainer.documents.download': def({
     method: 'GET',
