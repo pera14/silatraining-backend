@@ -1,14 +1,17 @@
 import { Module } from '@nestjs/common';
-import { NotificationsController } from './notifications.controller';
+import { SessionsModule } from '../sessions/sessions.module';
+import { NotificationsCron } from './notifications.cron';
+import { NotificationsListener } from './notifications.listener';
 import { NotificationsService } from './notifications.service';
 
 /**
  * Owner: Agent B (feat/content). Registered in AppModule during Phase 0 so nobody edits app.module.ts later.
- * Add providers/controllers here freely; see README.md for the endpoints to implement.
+ * Emails for domain events (A emits, B listens) plus the reminder / expiring-package crons. No HTTP endpoints.
+ * SessionsModule is imported only for its Clock, so e2e tests pin "now" for both modules at once.
  */
 @Module({
-  controllers: [NotificationsController],
-  providers: [NotificationsService],
+  imports: [SessionsModule],
+  providers: [NotificationsService, NotificationsListener, NotificationsCron],
   exports: [NotificationsService],
 })
 export class NotificationsModule {}
