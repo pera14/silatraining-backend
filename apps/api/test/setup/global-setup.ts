@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { startObjectStorage } from './minio';
 import { TEST_ENV } from './test-env';
 
 declare global {
@@ -50,9 +51,13 @@ async function resetLocalDatabase(url: string): Promise<void> {
  * Local (no Docker): TEST_DATABASE_URL, e.g. postgresql://sila:sila@localhost:5432/sila_test (`pnpm db:setup`).
  * CI / no TEST_DATABASE_URL: one Postgres 16 container per run (Testcontainers).
  * Either way the schema is built with the real migrations, including the raw SQL constraints.
+ * Plus a real MinIO for documents (Testcontainers, or TEST_S3_ENDPOINT).
  */
 export default async function globalSetup(): Promise<void> {
   Object.assign(process.env, TEST_ENV);
+  // Object storage (documents suite) starts alongside the database; see ./minio.ts.
+  const storage = startObjectStorage(TEST_ENV.S3_BUCKET!);
+  storage.catch(() => undefined); // surfaced by the await below, not as an unhandled rejection
   const localUrl = testDatabaseUrl();
   if (localUrl) {
     await resetLocalDatabase(localUrl);
@@ -66,6 +71,8 @@ export default async function globalSetup(): Promise<void> {
     globalThis.__SILA_PG__ = container;
     process.env.DATABASE_URL = container.getConnectionUri();
   }
+
+  Object.assign(process.env, await storage);
 
   execSync('pnpm exec prisma migrate deploy', { cwd: apiRoot, env: process.env, stdio: 'pipe' });
 }
