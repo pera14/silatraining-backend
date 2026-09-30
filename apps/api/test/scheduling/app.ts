@@ -11,7 +11,7 @@ import { FakeMailer, type TestContext } from '../setup/app';
 export class FakeClock extends Clock {
   current = new Date('2026-10-05T08:00:00Z'); // Monday 10:00 in Belgrade
 
-  now(): Date {
+  override now(): Date {
     return new Date(this.current);
   }
 
