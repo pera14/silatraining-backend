@@ -2,7 +2,7 @@
 
 **Owner:** Agent B (feat/content)
 
-Implement (endpoint keys from `@sila/contracts` `endpoints`):
+Implemented (endpoint keys from `@sila/contracts` `endpoints`):
 
 - trainer.plans.*
 - trainer.clientPlans.*
