@@ -379,7 +379,7 @@ export const endpoints = {
     params: IdParams,
     body: UpdateTrainerSessionRequest,
     response: TrainerPractice,
-    errors: ['NOT_FOUND'],
+    errors: ['NOT_FOUND', 'INVALID_STATE'],
   }),
   'trainer.sessions.move': def({
     method: 'POST',
@@ -389,7 +389,7 @@ export const endpoints = {
     params: IdParams,
     body: MoveSessionRequest,
     response: TrainerPractice,
-    errors: ['NOT_FOUND', 'SLOT_TAKEN'],
+    errors: ['NOT_FOUND', 'SLOT_TAKEN', 'INVALID_STATE'],
   }),
   'trainer.sessions.cancel': def({
     method: 'POST',
@@ -399,7 +399,7 @@ export const endpoints = {
     params: IdParams,
     body: TrainerCancelSessionRequest,
     response: TrainerPractice,
-    errors: ['NOT_FOUND'],
+    errors: ['NOT_FOUND', 'INVALID_STATE'],
   }),
 
   // ------------------------------------------------------------------ trainer: clients
@@ -798,7 +798,7 @@ export const endpoints = {
     summary: 'Cancel ≥ 6h ahead (practice returned)',
     params: IdParams,
     response: ClientPractice,
-    errors: ['NOT_FOUND', 'CANCEL_CUTOFF'],
+    errors: ['NOT_FOUND', 'CANCEL_CUTOFF', 'INVALID_STATE'],
   }),
   'client.packages': def({
     method: 'GET',

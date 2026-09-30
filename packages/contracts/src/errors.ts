@@ -17,6 +17,7 @@ export const ERROR_STATUS = {
   SLOT_OVERLAP: 409,
   EMAIL_TAKEN: 409,
   EXTENSION_LIMIT: 422,
+  INVALID_STATE: 409,
   // generic
   VALIDATION_FAILED: 400,
   RESET_TOKEN_INVALID: 400,
@@ -52,6 +53,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   SLOT_OVERLAP: 'This slot overlaps an existing slot.',
   EMAIL_TAKEN: 'An account with this email already exists. Sign in instead.',
   EXTENSION_LIMIT: 'A package can be extended to at most 5 weeks from its start.',
+  INVALID_STATE: 'This practice can no longer be changed.',
   VALIDATION_FAILED: 'Some fields are invalid.',
   RESET_TOKEN_INVALID: 'This reset link is invalid or has expired.',
   UNAUTHORIZED: 'Please sign in.',
