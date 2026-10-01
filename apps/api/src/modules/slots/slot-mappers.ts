@@ -29,6 +29,7 @@ export function toTrainerSlot(s: TrainerSlotRow): TrainerSlot {
     lockReason: s.lockReason,
     reservedFor: s.reservedForClient ? toPersonSummary(s.reservedForClient) : null,
     seriesId: s.seriesId,
+    parallel: s.parallel,
     practice: live
       ? { id: live.id, status: live.status, client: toPersonSummary(live.client) }
       : null,

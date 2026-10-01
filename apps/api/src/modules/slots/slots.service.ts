@@ -13,13 +13,21 @@ import { DomainError } from '../../common/errors/domain-error';
 import { OwnershipService } from '../../common/ownership/ownership.service';
 import { PackageUsageService } from '../../common/package-usage/package-usage.service';
 import { isConstraintViolation } from '../../common/prisma/prisma-errors';
-import { PrismaService } from '../../common/prisma/prisma.service';
+import { type PrismaTx, PrismaService } from '../../common/prisma/prisma.service';
 import { dateOnlyToIso, localDay } from '../../common/time/time';
 import { AppConfig } from '../../config/app-config.service';
 import { BookingService } from '../sessions/booking.service';
 import { Clock } from '../sessions/clock';
 import { TRAINER_PRACTICE_INCLUDE, toTrainerPractice } from '../sessions/session-mappers';
-import { findOverlaps, isValidSlotStart, localSlotStart, SLOT_MS, slotEnd } from './slot-time';
+import { lockTrainerSlots } from './slot-lock';
+import {
+  findOverlaps,
+  isValidSlotStart,
+  localSlotStart,
+  maxConcurrency,
+  SLOT_MS,
+  slotEnd,
+} from './slot-time';
 import { LIVE_SESSION, TRAINER_SLOT_INCLUDE, toTrainerSlot } from './slot-mappers';
 
 /** Longest range the calendar / client slot endpoints serve in one call (a month view plus padding). */
@@ -40,6 +48,9 @@ export class SlotsService {
    * A single slot `{startsAt}` or a bulk set of local dates × local times. All-or-nothing: if any requested slot
    * overlaps an existing slot or another requested one, nothing is created and 409 SLOT_OVERLAP lists them.
    * Bulk times that do not exist locally (the spring-forward hour) are skipped.
+   *
+   * A single `{startsAt, parallel: true}` slot may overlap existing slots as long as at most
+   * MAX_PARALLEL_SLOTS run at any moment (409 PARALLEL_LIMIT otherwise). Parallel slots are trainer-only.
    */
   async create(
     trainerId: string,
@@ -54,6 +65,7 @@ export class SlotsService {
           { path: 'startsAt', message: 'Start time must be HH:00 or HH:30 local time' },
         ]);
       }
+      if (body.parallel) return { created: [await this.createParallel(trainerId, startsAt)] };
       starts = [startsAt];
     } else {
       const unique = new Map<number, Date>();
@@ -69,12 +81,15 @@ export class SlotsService {
       }
     }
 
-    const existing = await this.existingStarts(trainerId, starts[0]!, starts[starts.length - 1]!);
-    this.assertNoOverlap(findOverlaps(starts, existing));
-
     try {
-      const created = await this.prisma.slot.createManyAndReturn({
-        data: starts.map((s) => ({ trainerId, startsAt: s, endsAt: slotEnd(s) })),
+      const created = await this.prisma.$transaction(async (tx) => {
+        await lockTrainerSlots(tx, trainerId);
+        // Checked against every slot, parallel ones included: a regular slot never lands on a parallel one.
+        const existing = await this.existingStarts(tx, trainerId, starts[0]!, starts.at(-1)!);
+        this.assertNoOverlap(findOverlaps(starts, existing));
+        return tx.slot.createManyAndReturn({
+          data: starts.map((s) => ({ trainerId, startsAt: s, endsAt: slotEnd(s) })),
+        });
       });
       return {
         created: created
@@ -87,6 +102,28 @@ export class SlotsService {
         throw new DomainError('SLOT_OVERLAP');
       throw err;
     }
+  }
+
+  /** An extra slot on top of existing ones, within the MAX_PARALLEL_SLOTS cap. */
+  private async createParallel(trainerId: string, startsAt: Date): Promise<TrainerSlot> {
+    const limit = this.config.get('MAX_PARALLEL_SLOTS');
+    const created = await this.prisma.$transaction(async (tx) => {
+      await lockTrainerSlots(tx, trainerId);
+      const existing = await this.existingStarts(tx, trainerId, startsAt, startsAt);
+      if (maxConcurrency(startsAt, existing) > limit) {
+        throw new DomainError(
+          'PARALLEL_LIMIT',
+          limit === 1
+            ? 'Parallel slots are turned off.'
+            : `At most ${limit} practices can overlap at any time.`,
+          { limit },
+        );
+      }
+      return tx.slot.create({
+        data: { trainerId, startsAt, endsAt: slotEnd(startsAt), parallel: true },
+      });
+    });
+    return toTrainerSlot({ ...created, reservedForClient: null, sessions: [] });
   }
 
   /** Lock/unlock, lock reason, reserve for a client. A booked slot cannot be locked or reserved for someone else. */
@@ -200,6 +237,8 @@ export class SlotsService {
         where: {
           trainerId: link.trainerId,
           status: 'OPEN',
+          // Parallel slots are the trainer's extra capacity, booked by the trainer only.
+          parallel: false,
           startsAt: { gte: start, lt: to },
           OR: [{ reservedForClientId: null }, { reservedForClientId: clientId }],
           sessions: { none: LIVE_SESSION },
@@ -240,8 +279,13 @@ export class SlotsService {
   }
 
   /** Starts of the trainer's slots that could overlap anything in [first, last + 60 min). */
-  private async existingStarts(trainerId: string, first: Date, last: Date): Promise<Date[]> {
-    const rows = await this.prisma.slot.findMany({
+  private async existingStarts(
+    tx: PrismaTx,
+    trainerId: string,
+    first: Date,
+    last: Date,
+  ): Promise<Date[]> {
+    const rows = await tx.slot.findMany({
       where: {
         trainerId,
         startsAt: {

@@ -84,6 +84,9 @@ Each empty module has a `README.md` listing the endpoint keys to implement.
   exclusion, SQLSTATE 23P01), `session_one_per_slot`, `join_link_one_active`, `calendar_feed_one_active`,
   `client_note_one_pinned`, package sanity checks, and the `package_usage` view. Prisma ignores these, so
   `prisma migrate diff` stays empty — do not "fix" that.
+- `Slot.parallel` (migration `*_parallel_slots`): trainer-added slots that may overlap others (two clients at once).
+  `slot_no_overlap` covers non-parallel slots only; the `MAX_PARALLEL_SLOTS` cap is enforced in `SlotsService` under
+  `lockTrainerSlots` (per-trainer advisory lock). Any code that inserts slots must take that lock first.
 - onDelete: client-owned data cascades on user delete (supports "Delete client"); `AuditLog`/`NotificationLog` have no FKs.
 - Join/calendar tokens: `token = HMAC(JOIN_TOKEN_SECRET, "<purpose>:<rowId>")` (`deriveToken`), DB stores only `sha256(token)`.
 

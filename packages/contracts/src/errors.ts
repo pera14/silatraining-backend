@@ -19,6 +19,7 @@ export const ERROR_STATUS = {
   EXTENSION_LIMIT: 422,
   INVALID_STATE: 409,
   UPLOAD_INVALID: 422,
+  PARALLEL_LIMIT: 409,
   // generic
   VALIDATION_FAILED: 400,
   RESET_TOKEN_INVALID: 400,
@@ -57,6 +58,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   INVALID_STATE: 'This practice can no longer be changed.',
   UPLOAD_INVALID:
     'The upload is missing or does not match the selected file. Please upload it again.',
+  PARALLEL_LIMIT: 'Too many practices would overlap at this time.',
   VALIDATION_FAILED: 'Some fields are invalid.',
   RESET_TOKEN_INVALID: 'This reset link is invalid or has expired.',
   UNAUTHORIZED: 'Please sign in.',

@@ -1,4 +1,4 @@
-import { findOverlaps, isValidSlotStart, localSlotStart } from './slot-time';
+import { findOverlaps, isValidSlotStart, localSlotStart, maxConcurrency } from './slot-time';
 
 const zone = 'Europe/Belgrade';
 const iso = (d: Date | null) => d?.toISOString() ?? null;
@@ -47,5 +47,15 @@ describe('findOverlaps', () => {
 
   it('ignores overlaps between existing slots only', () => {
     expect(findOverlaps([d('12:00')], [d('09:00'), d('09:30')])).toEqual([]);
+  });
+});
+
+describe('maxConcurrency', () => {
+  // the sweep itself is covered in @sila/contracts (slot-overlap.spec.ts)
+  it('counts a same-time and a half-overlapping slot, not touching ones', () => {
+    const t = (hhmm: string) => new Date(`2026-10-05T${hhmm}:00Z`);
+    expect(maxConcurrency(t('08:00'), [t('08:00')])).toBe(2);
+    expect(maxConcurrency(t('08:30'), [t('08:00'), t('08:30'), t('09:00')])).toBe(3);
+    expect(maxConcurrency(t('08:00'), [t('07:00'), t('09:00')])).toBe(1);
   });
 });

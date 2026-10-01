@@ -352,6 +352,7 @@ export function buildFixtures(now: Date = new Date()): Fixtures {
       locked?: string;
       reservedFor?: string;
       planIdx?: number;
+      parallel?: boolean;
     } = {},
   ) => {
     const slotId = fid(++slotN);
@@ -385,6 +386,7 @@ export function buildFixtures(now: Date = new Date()): Fixtures {
       lockReason: opts.locked ?? null,
       reservedFor: opts.reservedFor ? summary(clientById.get(opts.reservedFor)!) : null,
       seriesId: null,
+      parallel: opts.parallel ?? false,
       practice,
     });
   };

@@ -88,7 +88,7 @@ BOOKING_CUTOFF_HOURS=6  CANCEL_CUTOFF_HOURS=6  SLOT_HORIZON_WEEKS=8
 
 ## 3. Data model
 
-A practice is a booking of exactly one slot, and practices left are always computed from the package (total + adjustment − used), never stored as a counter. Overlapping slots and double bookings are blocked by Postgres exclusion constraints.
+A practice is a booking of exactly one slot, and practices left are always computed from the package (total + adjustment − used), never stored as a counter. Overlapping slots and double bookings are blocked by Postgres exclusion constraints. The one exception is a *parallel slot*: an extra slot the trainer adds so two clients can train at once (see §4 Slots).
 
 ```prisma
 enum Role { TRAINER CLIENT }
@@ -150,6 +150,7 @@ model Slot {
   lockReason String?               // e.g. "Break", "Personal"
   reservedForClientId String?      // only this client can see/book it
   seriesId String?
+  parallel Boolean @default(false) // trainer-added extra slot that may overlap others (two clients at once)
   @@index([trainerId, startsAt])
 }
 
@@ -269,12 +270,12 @@ Add relations and `onDelete` rules in the real schema. The snippet above shows f
 ```sql
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
--- slots: 60 min, start on :00 or :30, never overlap per trainer
+-- slots: 60 min, start on :00 or :30, regular slots never overlap per trainer (parallel slots may)
 ALTER TABLE "Slot" ADD CONSTRAINT slot_len CHECK ("endsAt" = "startsAt" + interval '60 minutes');
 ALTER TABLE "Slot" ADD CONSTRAINT slot_start CHECK (
   extract(minute from "startsAt") IN (0, 30) AND extract(second from "startsAt") = 0);
 ALTER TABLE "Slot" ADD CONSTRAINT slot_no_overlap
-  EXCLUDE USING gist ("trainerId" WITH =, tstzrange("startsAt", "endsAt") WITH &&);
+  EXCLUDE USING gist ("trainerId" WITH =, tstzrange("startsAt", "endsAt") WITH &&) WHERE (NOT "parallel");
 
 -- one live practice per slot
 CREATE UNIQUE INDEX session_one_per_slot ON "Session"("slotId") WHERE status <> 'CANCELLED';
@@ -299,7 +300,8 @@ Every booking, cancellation and attendance change runs in one database transacti
 
 **Slots (trainer)**
 
-- Every slot is 60 min and starts at :00 or :30 local time. Slots never overlap, so 09:00 and 09:30 cannot both exist.
+- Every slot is 60 min and starts at :00 or :30 local time. Regular slots never overlap, so 09:00 and 09:30 cannot both exist.
+- **Parallel slots** let the trainer run two clients at once: from a slot or a booked practice, "Add another client" creates a single extra slot (`parallel: true`) at the same start or ±30 min (08:00–09:00 + 08:00–09:00, or + 08:30–09:30). Each parallel slot still holds one practice. At most `MAX_PARALLEL_SLOTS` (default 2) slots may run at any moment; otherwise `409 PARALLEL_LIMIT`. Parallel slots are never shown to clients, and regular slots or series days cannot be added on top of one. Group classes remain out of scope.
 - The trainer creates a single slot, a bulk set (days × start times), or a repeating series (weekdays + time, from/until).
 - A nightly cron materializes series into `Slot` rows `SLOT_HORIZON_WEEKS` (8) ahead. Editing or ending a series applies to future unbooked slots only.
 - Breaks are simply gaps with no slots. "Block time" locks every open slot in a range with a reason ("Break", "Personal").

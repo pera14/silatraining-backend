@@ -286,11 +286,12 @@ export const endpoints = {
     method: 'POST',
     path: '/trainer/slots',
     access: 'TRAINER',
-    summary: 'Single `{startsAt}` or bulk `{dates, times}`; rejects overlaps',
+    summary:
+      'Single `{startsAt, parallel?}` or bulk `{dates, times}`; rejects overlaps unless `parallel` (then capped)',
     body: CreateSlotsRequest,
     response: CreateSlotsResponse,
     status: 201,
-    errors: ['SLOT_OVERLAP'],
+    errors: ['SLOT_OVERLAP', 'PARALLEL_LIMIT'],
   }),
   'trainer.slots.update': def({
     method: 'PATCH',

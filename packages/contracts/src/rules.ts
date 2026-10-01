@@ -10,5 +10,7 @@ export const RULES = {
   expiringWithinDays: 5,
   /** Longest `from..to` window of a calendar or slots query. */
   maxRangeDays: 62,
+  /** Most slots (base + parallel) a trainer may have running at the same moment. */
+  maxParallelSlots: 2,
   timezone: 'Europe/Belgrade',
 } as const;
