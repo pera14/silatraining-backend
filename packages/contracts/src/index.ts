@@ -9,3 +9,4 @@ export * from './schemas/content';
 export * from './schemas/client';
 export * from './endpoints';
 export * from './rules';
+export * from './slot-overlap';

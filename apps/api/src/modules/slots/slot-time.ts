@@ -1,4 +1,4 @@
-import { RULES } from '@sila/contracts';
+import { peakConcurrency, RULES } from '@sila/contracts';
 import { DateTime } from 'luxon';
 
 export const SLOT_MS = RULES.practiceMinutes * 60_000;
@@ -50,4 +50,12 @@ export function findOverlaps(candidates: Date[], existing: Date[]): Date[] {
     }
   }
   return [...hits].sort((a, b) => a - b).map((t) => new Date(t));
+}
+
+/** Peak number of slots running at once within `candidate`'s hour, the candidate included (parallel-slot cap). */
+export function maxConcurrency(candidate: Date, existing: Date[]): number {
+  return peakConcurrency(
+    candidate.getTime(),
+    existing.map((d) => d.getTime()),
+  );
 }

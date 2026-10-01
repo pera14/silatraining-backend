@@ -133,6 +133,127 @@ describe('slots and series (e2e)', () => {
 
   // ------------------------------------------------------------------ update / delete / lock-range
 
+  describe('parallel slots (two clients at once)', () => {
+    const createParallel = (t: Awaited<ReturnType<typeof trainer>>, day: string, time: string) =>
+      t.api
+        .post('/trainer/slots')
+        .send({ startsAt: local(day, time).toISOString(), parallel: true });
+
+    it('adds a slot at the same time or half an hour off, and books a different client into each', async () => {
+      const w = await world(ctx);
+      const other = await clientOf(ctx, w.trainer.user.id);
+      const base = await addSlot(ctx, w.trainer.user.id, local('2026-10-06', '08:00'));
+
+      const same = CreateSlotsResponse.parse(
+        (await createParallel(w.trainer, '2026-10-06', '08:00').expect(201)).body,
+      );
+      expect(same.created[0]).toMatchObject({ parallel: true, status: 'OPEN', practice: null });
+      await w.trainer.api.delete(`/trainer/slots/${same.created[0]!.id}`).expect(204);
+
+      const offset = CreateSlotsResponse.parse(
+        (await createParallel(w.trainer, '2026-10-06', '08:30').expect(201)).body,
+      );
+      await w.trainer.api
+        .post('/trainer/sessions')
+        .send({ slotId: base.id, clientId: w.client.user.id })
+        .expect(201);
+      await w.trainer.api
+        .post('/trainer/sessions')
+        .send({ slotId: offset.created[0]!.id, clientId: other.user.id, withoutPackage: true })
+        .expect(201);
+
+      const cal = CalendarResponse.parse(
+        (
+          await w.trainer.api
+            .get('/trainer/calendar?from=2026-10-06T00:00:00Z&to=2026-10-07T00:00:00Z')
+            .expect(200)
+        ).body,
+      );
+      expect(cal.slots.map((s) => [s.parallel, s.practice?.client.id])).toEqual([
+        [false, w.client.user.id],
+        [true, other.user.id],
+      ]);
+    });
+
+    it('caps overlapping slots at MAX_PARALLEL_SLOTS (409 PARALLEL_LIMIT), counting the peak only', async () => {
+      const t = await trainer(ctx);
+      await addSlot(ctx, t.user.id, local('2026-10-06', '08:00'));
+      await addSlot(ctx, t.user.id, local('2026-10-06', '09:00'));
+      await createParallel(t, '2026-10-06', '08:30').expect(201); // 08:00 + 08:30, then 08:30 + 09:00
+
+      for (const time of ['08:00', '08:30', '09:00']) {
+        const res = await createParallel(t, '2026-10-06', time).expect(409);
+        expect(res.body).toMatchObject({ code: 'PARALLEL_LIMIT', details: { limit: 2 } });
+      }
+      // 07:30 only overlaps 08:00 (it ends as 08:30 starts); 10:00 only overlaps 09:00
+      await createParallel(t, '2026-10-06', '07:30').expect(201);
+      await createParallel(t, '2026-10-06', '10:00').expect(201);
+      expect(await ctx.prisma.slot.count({ where: { parallel: true } })).toBe(3);
+    });
+
+    it('serializes concurrent parallel creates so the cap holds under a race', async () => {
+      const t = await trainer(ctx);
+      await addSlot(ctx, t.user.id, local('2026-10-06', '08:00'));
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => createParallel(t, '2026-10-06', '08:00')),
+      );
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409]);
+    });
+
+    it('keeps regular slots from landing on a parallel slot', async () => {
+      const t = await trainer(ctx);
+      await createParallel(t, '2026-10-06', '08:30').expect(201);
+      const res = await t.api
+        .post('/trainer/slots')
+        .send({ startsAt: local('2026-10-06', '08:00').toISOString() })
+        .expect(409);
+      expect(res.body.code).toBe('SLOT_OVERLAP');
+    });
+
+    it('never offers parallel slots to clients', async () => {
+      const w = await world(ctx);
+      const base = await addSlot(ctx, w.trainer.user.id, local('2026-10-06', '08:00'));
+      await addSlot(ctx, w.trainer.user.id, local('2026-10-06', '08:30'), { parallel: true });
+      const res = await w.client.api
+        .get('/client/slots?from=2026-10-05T00:00:00Z&to=2026-10-10T00:00:00Z')
+        .expect(200);
+      expect(
+        z
+          .array(ClientSlot)
+          .parse(res.body)
+          .map((s) => s.id),
+      ).toEqual([base.id]);
+    });
+
+    it('the series materializer skips days a parallel slot already covers', async () => {
+      const t = await trainer(ctx);
+      const series = (
+        await t.api
+          .post('/trainer/slot-series')
+          .send({
+            weekdays: [2],
+            startTime: '18:00',
+            validFrom: '2026-10-06',
+            validUntil: '2026-10-20',
+          })
+          .expect(201)
+      ).body;
+      const before = await seriesSlots(series.id);
+      expect(before).toHaveLength(3);
+      // the trainer frees Tue 13 Oct and puts a parallel slot at 18:30 instead
+      await t.api.delete(`/trainer/slots/${before[1]!.id}`).expect(204);
+      await addSlot(ctx, t.user.id, local('2026-10-13', '18:30'), { parallel: true });
+
+      const svc = ctx.app.get(SeriesService);
+      const row = await ctx.prisma.slotSeries.findUniqueOrThrow({ where: { id: series.id } });
+      expect(await svc.materialize(ctx.prisma, row, { rebuild: true })).toBe(0);
+      expect((await seriesSlots(series.id)).map((s) => s.id)).toEqual([
+        before[0]!.id,
+        before[2]!.id,
+      ]);
+    });
+  });
+
   describe('PATCH/DELETE /trainer/slots/:id and lock-range', () => {
     it('locks with a reason, unlocks (clearing it) and reserves for own clients only', async () => {
       const w = await world(ctx);

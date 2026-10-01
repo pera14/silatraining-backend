@@ -10,6 +10,7 @@ import { Clock } from '../sessions/clock';
 import { addDays, isoWeekday } from '../sessions/local-day';
 import { AutoBookService } from './auto-book.service';
 import { LIVE_SESSION, SERIES_INCLUDE, toSlotSeries } from './slot-mappers';
+import { lockTrainerSlots } from './slot-lock';
 import { findOverlaps, localSlotStart, SLOT_MS, slotEnd } from './slot-time';
 
 const INSERT_CHUNK = 500;
@@ -197,15 +198,18 @@ export class SeriesService {
     }
     if (starts.length === 0) return 0;
 
+    await lockTrainerSlots(tx, series.trainerId);
+    const window = {
+      gt: new Date(starts[0]!.getTime() - SLOT_MS),
+      lt: new Date(starts.at(-1)!.getTime() + SLOT_MS),
+    };
+
     if (opts.strict) {
       const foreign = await tx.slot.findMany({
         where: {
           trainerId: series.trainerId,
           OR: [{ seriesId: null }, { seriesId: { not: series.id } }],
-          startsAt: {
-            gt: new Date(starts[0]!.getTime() - SLOT_MS),
-            lt: new Date(starts.at(-1)!.getTime() + SLOT_MS),
-          },
+          startsAt: window,
         },
         select: { startsAt: true },
       });
@@ -220,9 +224,22 @@ export class SeriesService {
       }
     }
 
+    // ON CONFLICT only sees non-parallel slots (partial exclusion), so skip days a parallel slot already covers.
+    const parallel = await tx.slot.findMany({
+      where: { trainerId: series.trainerId, parallel: true, startsAt: window },
+      select: { startsAt: true },
+    });
+    const blocked = new Set(
+      findOverlaps(
+        starts,
+        parallel.map((p) => p.startsAt),
+      ).map((d) => d.getTime()),
+    );
+    const toInsert = starts.filter((s) => !blocked.has(s.getTime()));
+
     let inserted = 0;
-    for (let i = 0; i < starts.length; i += INSERT_CHUNK) {
-      const rows = starts.slice(i, i + INSERT_CHUNK).map(
+    for (let i = 0; i < toInsert.length; i += INSERT_CHUNK) {
+      const rows = toInsert.slice(i, i + INSERT_CHUNK).map(
         (s) => Prisma.sql`(gen_random_uuid()::text, ${series.trainerId}, ${s}, ${slotEnd(s)},
           'OPEN'::"SlotStatus", ${series.reservedForClientId}, ${series.id})`,
       );

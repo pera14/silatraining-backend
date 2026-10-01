@@ -97,7 +97,7 @@ export async function addSlot(
   ctx: SchedulingContext,
   trainerId: string,
   startsAt: Date,
-  data: { status?: 'OPEN' | 'LOCKED'; reservedForClientId?: string } = {},
+  data: { status?: 'OPEN' | 'LOCKED'; reservedForClientId?: string; parallel?: boolean } = {},
 ) {
   return ctx.prisma.slot.create({
     data: {

@@ -98,6 +98,11 @@ export const TrainerSlot = z.object({
   lockReason: z.string().nullable(),
   reservedFor: PersonSummary.nullable(),
   seriesId: Id.nullable(),
+  /**
+   * An extra slot the trainer added on top of another (two clients at once). Parallel slots may overlap other
+   * slots up to RULES.maxParallelSlots at any moment and are never offered to clients for self-booking.
+   */
+  parallel: z.boolean().default(false),
   /** The live (non-cancelled) practice on this slot, if booked. */
   practice: z.object({ id: Id, status: SessionStatus, client: PersonSummary }).nullable(),
 });
@@ -118,9 +123,12 @@ export const CalendarResponse = z.object({
 });
 export type CalendarResponse = z.infer<typeof CalendarResponse>;
 
-/** `POST /trainer/slots`: a single slot, or a bulk set of local dates × local start times. */
+/**
+ * `POST /trainer/slots`: a single slot, or a bulk set of local dates × local start times. A single slot with
+ * `parallel: true` may overlap existing slots (up to RULES.maxParallelSlots running at once).
+ */
 export const CreateSlotsRequest = z.union([
-  z.object({ startsAt: IsoDateTime }),
+  z.object({ startsAt: IsoDateTime, parallel: z.boolean().optional() }),
   z.object({
     dates: z.array(IsoDate).min(1).max(62),
     times: z.array(SlotStartTime).min(1).max(48),

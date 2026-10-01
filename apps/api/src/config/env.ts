@@ -12,6 +12,8 @@ export const EnvSchema = z.object({
   BOOKING_CUTOFF_HOURS: z.coerce.number().int().nonnegative().default(6),
   CANCEL_CUTOFF_HOURS: z.coerce.number().int().nonnegative().default(6),
   SLOT_HORIZON_WEEKS: z.coerce.number().int().positive().default(8),
+  /** Most slots (base + parallel) a trainer may run at the same moment. 1 disables parallel slots. */
+  MAX_PARALLEL_SLOTS: z.coerce.number().int().positive().default(2),
 
   DATABASE_URL: z.string().startsWith('postgres'),
 

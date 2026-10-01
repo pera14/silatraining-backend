@@ -16,12 +16,13 @@ describe('database constraints (e2e)', () => {
     await resetDb(ctx.prisma);
   });
 
-  const slotAt = (trainerId: string, iso: string, minutes = 60) =>
+  const slotAt = (trainerId: string, iso: string, minutes = 60, parallel = false) =>
     ctx.prisma.slot.create({
       data: {
         trainerId,
         startsAt: new Date(iso),
         endsAt: new Date(Date.parse(iso) + minutes * 60_000),
+        parallel,
       },
     });
 
@@ -42,6 +43,15 @@ describe('database constraints (e2e)', () => {
     expect(isConstraintViolation(err, 'exclusion', 'slot_no_overlap')).toBe(true);
     await slotAt(t1.id, '2026-10-05T08:00:00Z'); // back-to-back is fine
     await slotAt(t2.id, '2026-10-05T07:30:00Z'); // other trainer is fine
+  });
+
+  it('lets parallel slots overlap (the API caps them); regular slots still exclude each other', async () => {
+    const t = await createUser(ctx.prisma, 'TRAINER');
+    await slotAt(t.id, '2026-10-05T07:00:00Z');
+    await slotAt(t.id, '2026-10-05T07:00:00Z', 60, true);
+    await slotAt(t.id, '2026-10-05T07:30:00Z', 60, true);
+    const err = await catchErr(slotAt(t.id, '2026-10-05T07:30:00Z'));
+    expect(isConstraintViolation(err, 'exclusion', 'slot_no_overlap')).toBe(true);
   });
 
   it('rejects slots not starting on :00/:30 or not exactly 60 minutes', async () => {

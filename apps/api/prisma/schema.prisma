@@ -11,6 +11,8 @@
 //   - CalendarFeedToken  (per-trainer iCal token, Agent B)
 //   - NotificationLog    (idempotent one-off emails such as "package expires in 5 days", Agent B)
 //   - Every instant is timestamptz; calendar days (package validity, series range) are `date`.
+//   - Slot.parallel (2026-10-01, migration *_parallel_slots): trainer-added slots that may overlap others, so
+//     one trainer can run two clients at once. The no-overlap exclusion applies to non-parallel slots only.
 
 generator client {
   provider            = "prisma-client"
@@ -189,6 +191,8 @@ model Slot {
   lockReason          String?
   reservedForClientId String?
   seriesId            String?
+  /// Trainer-added extra slot that may overlap others (up to MAX_PARALLEL_SLOTS at once). Never offered to clients.
+  parallel            Boolean    @default(false)
 
   trainer           User        @relation("SlotTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
   reservedForClient User?       @relation("SlotReservedFor", fields: [reservedForClientId], references: [id], onDelete: SetNull)
