@@ -1,0 +1,8 @@
+# server-only files (secrets and deploy state); only the *.example templates belong in git
+.env.prod
+backup.env
+.env.images
+.env.images.*
+deploy-history.log
+.deploy.lock
+docker-compose.override.yml

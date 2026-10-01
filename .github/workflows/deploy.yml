@@ -1,0 +1,126 @@
+name: Deploy
+
+# Production deploy over SSH (docs/DEPLOY.md). The only workflow that touches the VPS; every path ends here:
+#   - CI on main (this repo) calls it with the new API image
+#   - the frontend repo's CI sends `repository_dispatch` (deploy-web) with the new web image
+#   - manual "Run workflow": pin specific images, or roll back to the previous pins
+# It syncs infra/ files to DEPLOY_PATH, runs infra/deploy.sh there (pull + up --wait), then smoke-tests the site.
+
+on:
+  workflow_call:
+    inputs:
+      api_image:
+        type: string
+        default: ''
+      web_image:
+        type: string
+        default: ''
+  repository_dispatch:
+    types: [deploy-web]
+  workflow_dispatch:
+    inputs:
+      api_image:
+        description: 'API image to pin, e.g. ghcr.io/pera14/sila-api:<sha> (empty = keep current)'
+        default: ''
+      web_image:
+        description: 'Web image to pin, e.g. ghcr.io/pera14/sila-web:<sha> (empty = keep current)'
+        default: ''
+      rollback:
+        description: 'Ignore the images above and restore the pins from before the last deploy'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    # one deploy at a time, across all triggers; queued, never cancelled
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      API_IMAGE: ${{ inputs.api_image }}
+      WEB_IMAGE: ${{ inputs.web_image || github.event.client_payload.web_image }}
+      ROLLBACK: ${{ inputs.rollback == true }}
+      APP_URL: ${{ vars.APP_URL }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          re='^ghcr\.io/pera14/sila-(api|web)(:[A-Za-z0-9._-]{1,128}|@sha256:[a-f0-9]{64})$'
+          for v in API_IMAGE WEB_IMAGE; do
+            val="${!v}"
+            if [[ -n "$val" && ! "$val" =~ $re ]]; then echo "::error::invalid $v: $val"; exit 1; fi
+          done
+          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_PATH APP_URL; do
+            if [[ -z "${!v}" ]]; then echo "::error::$v is not configured (see docs/DEPLOY.md)"; exit 1; fi
+          done
+          echo "api=${API_IMAGE:-<keep>} web=${WEB_IMAGE:-<keep>} rollback=${ROLLBACK}"
+
+      - name: Configure SSH (pinned host key)
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CFG
+          Host sila-prod
+            HostName ${DEPLOY_HOST}
+            User ${DEPLOY_USER}
+            Port ${DEPLOY_PORT}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            BatchMode yes
+            ConnectTimeout 15
+            ServerAliveInterval 15
+          CFG
+
+      - name: Sync infra files
+        run: |
+          remote_path="$(printf '%q' "$DEPLOY_PATH")"
+          # shellcheck disable=SC2029  # expanded locally on purpose, already %q-quoted for the remote shell
+          tar -C infra -czf - docker-compose.yml Caddyfile deploy.sh backup.sh postgres minio \
+              .env.prod.example backup.env.example |
+            ssh sila-prod "mkdir -p ${remote_path} && tar -xzf - -C ${remote_path}"
+
+      - name: Deploy
+        run: |
+          args=()
+          if [[ "$ROLLBACK" == true ]]; then
+            args+=(--rollback)
+          else
+            [[ -n "$API_IMAGE" ]] && args+=(--api "$API_IMAGE")
+            [[ -n "$WEB_IMAGE" ]] && args+=(--web "$WEB_IMAGE")
+          fi
+          quoted=""
+          if ((${#args[@]})); then quoted="$(printf '%q ' "${args[@]}")"; fi
+          # shellcheck disable=SC2029  # expanded locally on purpose, already %q-quoted for the remote shell
+          ssh sila-prod "cd $(printf '%q' "$DEPLOY_PATH") && ./deploy.sh ${quoted}"
+
+      - name: Smoke test
+        run: |
+          base="${APP_URL%/}"
+          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors --max-time 10 "$base/api/health"
+          echo
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors --max-time 10 -o /dev/null "$base/login"
+          echo "web ok"
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -rf ~/.ssh/deploy_key

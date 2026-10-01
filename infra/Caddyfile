@@ -1,0 +1,79 @@
+# SILA Training — edge proxy (SPEC §7). Domains come from .env.prod via the compose environment.
+#   {$APP_DOMAIN}   /api/* -> api:3000, everything else -> web:3001
+#   {$FILES_DOMAIN} -> minio:9000 (presigned URLs only; the bucket is private)
+{
+	email {$ACME_EMAIL}
+	# Caddy is the only entry point. With no trusted_proxies it ignores client-sent X-Forwarded-For and sets
+	# the real client IP, which the API (trust proxy = private ranges) uses for per-IP rate limiting.
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		# Only if the upstream sent none: the API's Helmet CSP is stricter and must win.
+		?Content-Security-Policy "frame-ancestors 'none'"
+		-Server
+		-X-Powered-By
+	}
+}
+
+(access_log) {
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				# presigned URL signatures and one-time tokens must not end up in logs
+				request>uri query {
+					delete X-Amz-Signature
+					delete X-Amz-Credential
+					delete token
+				}
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+}
+
+{$APP_DOMAIN} {
+	import security_headers
+	import access_log
+	encode zstd gzip
+
+	handle /api/* {
+		# JSON only (files never pass through the API); Nest's own body-parser limit is 100 kB.
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy api:3000
+	}
+
+	handle {
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy web:3001
+	}
+}
+
+{$FILES_DOMAIN} {
+	import security_headers
+	import access_log
+
+	# Presigned PUT uploads (contracts: DOCUMENT_MAX_BYTES = 20 MB; the signature pins the exact length).
+	request_body {
+		max_size 25MB
+	}
+
+	# SigV4 signs the Host header: Caddy forwards the client's Host ({$FILES_DOMAIN}) unchanged by default,
+	# which is exactly the host the API signed for (S3_PUBLIC_ENDPOINT). Do not add header_up Host here.
+	reverse_proxy minio:9000 {
+		flush_interval -1
+	}
+}

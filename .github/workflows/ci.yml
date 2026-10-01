@@ -7,7 +7,11 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # PR runs are superseded by newer pushes; runs on main queue instead, so a deploy is never killed halfway
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -31,3 +35,47 @@ jobs:
       - run: pnpm test
       # Supertest against a real Postgres 16 (Testcontainers; Docker is available on ubuntu-latest)
       - run: pnpm test:e2e
+
+  # main only: build the API image and push it to GHCR as :<git sha> and :latest
+  image:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/pera14/sila-api
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          # the VPS architecture; add linux/arm64 for an ARM server (e.g. Hetzner CAX)
+          platforms: linux/amd64
+          push: true
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha,scope=sila-api
+          cache-to: type=gha,mode=max,scope=sila-api
+      - id: ref
+        run: echo "image=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: image
+    uses: ./.github/workflows/deploy.yml
+    with:
+      api_image: ${{ needs.image.outputs.image }}
+    secrets: inherit

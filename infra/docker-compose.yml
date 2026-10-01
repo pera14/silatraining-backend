@@ -1,0 +1,207 @@
+# SILA Training — production stack (SPEC §7). One VPS, Docker Compose, Caddy terminates TLS.
+#
+#   docker compose --env-file .env.prod --env-file .env.images up -d --wait
+#
+# .env.prod    secrets + domains, written by hand from .env.prod.example (never committed)
+# .env.images  API_IMAGE / WEB_IMAGE pinned to immutable tags, written by deploy.sh (see docs/DEPLOY.md)
+#
+# Networks: `backend` is internal (no route to the internet): postgres, minio and web live only there.
+# api (SMTP), caddy (ACME + public ports) and the backup `mc` tool also join `egress`.
+# Only caddy publishes ports (80/443).
+
+name: sila
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD in .env.prod}
+      POSTGRES_DB: postgres
+      # consumed by postgres/01-app-role.sh on first boot (empty volume) only
+      APP_DB_NAME: ${APP_DB_NAME:-sila}
+      APP_DB_USER: ${APP_DB_USER:-sila}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env.prod}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres:/docker-entrypoint-initdb.d:ro
+    shm_size: 256mb
+    stop_grace_period: 60s
+    networks: [backend]
+    healthcheck:
+      # -h 127.0.0.1: the init-time server listens on the socket only, so this passes once init is done
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U postgres -d "$${APP_DB_NAME}"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  minio:
+    image: ${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-08-04T00-00-00Z} # maintained fork; upstream images are gone
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env.prod}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env.prod}
+      # Static KMS key for SSE-S3 (`mc encrypt set sse-s3` in minio/init.sh). Losing it = losing every object:
+      # keep it in the password manager next to the backups' credentials.
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY:?set MINIO_KMS_SECRET_KEY in .env.prod}
+      # browsers PUT/GET presigned URLs cross-origin from the app
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN in .env.prod}
+      MINIO_BROWSER: 'off' # no web console
+    volumes:
+      - miniodata:/data
+    networks: [backend]
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    logging: *logging
+
+  # One-shot, idempotent: private + encrypted bucket and a least-privilege API user (minio/init.sh).
+  minio-init:
+    image: ${MC_IMAGE:-pgsty/mc:RELEASE.2026-09-16T00-00-00Z}
+    restart: 'no'
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '/init/init.sh']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      BUCKET: ${S3_BUCKET:-sila-documents}
+      API_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env.prod}
+      API_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env.prod}
+    volumes:
+      - ./minio/init.sh:/init/init.sh:ro
+    networks: [backend]
+    logging: *logging
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/pera14/sila-api:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      APP_URL: https://${APP_DOMAIN}
+      API_URL: https://${APP_DOMAIN}/api
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Belgrade}
+      BOOKING_CUTOFF_HOURS: ${BOOKING_CUTOFF_HOURS:-6}
+      CANCEL_CUTOFF_HOURS: ${CANCEL_CUTOFF_HOURS:-6}
+      SLOT_HORIZON_WEEKS: ${SLOT_HORIZON_WEEKS:-8}
+      DATABASE_URL: postgresql://${APP_DB_USER:-sila}:${APP_DB_PASSWORD}@postgres:5432/${APP_DB_NAME:-sila}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET in .env.prod}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env.prod}
+      JOIN_TOKEN_SECRET: ${JOIN_TOKEN_SECRET:?set JOIN_TOKEN_SECRET in .env.prod}
+      SESSION_HINT_SECRET: ${SESSION_HINT_SECRET:?set SESSION_HINT_SECRET in .env.prod}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-5}
+      # server-side calls stay on the internal network; presigned URLs are signed for the public files host
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: https://${FILES_DOMAIN:?set FILES_DOMAIN in .env.prod}
+      S3_BUCKET: ${S3_BUCKET:-sila-documents}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # production refuses MAIL_TRANSPORT=log: real SMTP is mandatory
+      MAIL_TRANSPORT: smtp
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST in .env.prod}
+      SMTP_PORT: ${SMTP_PORT:?set SMTP_PORT in .env.prod}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM in .env.prod}
+    read_only: true
+    tmpfs:
+      - /tmp
+    <<: *hardening
+    networks: [backend, egress]
+    # healthcheck: built into the image (GET /api/health, which also pings the database)
+    logging: *logging
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/pera14/sila-web:latest}
+    restart: unless-stopped
+    environment:
+      PORT: '3001'
+      # must equal the API's value: proxy.ts verifies the sila_session role-hint cookie with it
+      SESSION_HINT_SECRET: ${SESSION_HINT_SECRET}
+      # informational: the /api rewrite target is baked in at image build time (Caddy routes /api itself)
+      API_PROXY_TARGET: http://api:3000
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/frontend/apps/web/.next/cache:uid=1000,gid=1000
+    <<: *hardening
+    networks: [backend]
+    # healthcheck: built into the image
+    logging: *logging
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      FILES_DOMAIN: ${FILES_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.prod}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates + ACME account: keep across deploys
+      - caddy_config:/config
+    networks: [backend, egress]
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:2019/config/']
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    logging: *logging
+
+  # Tooling for infra/backup.sh only (`--profile tools`); never started by `up`.
+  mc:
+    image: ${MC_IMAGE:-pgsty/mc:RELEASE.2026-09-16T00-00-00Z}
+    profiles: [tools]
+    entrypoint: ['mc']
+    environment:
+      MC_HOST_src: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+    networks: [backend, egress]
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  egress: {}
+
+volumes:
+  pgdata:
+  miniodata:
+  caddy_data:
+  caddy_config:

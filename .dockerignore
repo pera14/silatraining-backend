@@ -1,0 +1,21 @@
+# Build context for apps/api/Dockerfile is the backend repo root (pnpm workspace).
+# Keep it small and free of secrets; the image installs and builds everything itself.
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+**/.DS_Store
+**/.turbo
+**/*.tsbuildinfo
+.git
+.github
+.husky
+.env
+.env.*
+!.env.example
+infra
+docs
+apps/api/src/generated
+apps/api/test
+**/Dockerfile
+**/.dockerignore
