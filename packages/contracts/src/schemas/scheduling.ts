@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RULES } from '../rules';
 import {
   Id,
   IsoDate,
@@ -104,7 +105,10 @@ export type TrainerSlot = z.infer<typeof TrainerSlot>;
 
 export const RangeQuery = z
   .object({ from: IsoDateTime, to: IsoDateTime })
-  .refine((v) => Date.parse(v.from) < Date.parse(v.to), { message: '`from` must be before `to`' });
+  .refine((v) => Date.parse(v.from) < Date.parse(v.to), { message: '`from` must be before `to`' })
+  .refine((v) => Date.parse(v.to) - Date.parse(v.from) <= RULES.maxRangeDays * 86_400_000, {
+    message: `The range can span at most ${RULES.maxRangeDays} days`,
+  });
 export type RangeQuery = z.infer<typeof RangeQuery>;
 
 export const CalendarResponse = z.object({
@@ -137,7 +141,10 @@ export type UpdateSlotRequest = z.infer<typeof UpdateSlotRequest>;
 
 export const LockRangeRequest = z
   .object({ from: IsoDateTime, to: IsoDateTime, reason: z.string().trim().min(1).max(80) })
-  .refine((v) => Date.parse(v.from) < Date.parse(v.to), { message: '`from` must be before `to`' });
+  .refine((v) => Date.parse(v.from) < Date.parse(v.to), { message: '`from` must be before `to`' })
+  .refine((v) => Date.parse(v.to) - Date.parse(v.from) <= RULES.maxRangeDays * 86_400_000, {
+    message: `The range can span at most ${RULES.maxRangeDays} days`,
+  });
 export type LockRangeRequest = z.infer<typeof LockRangeRequest>;
 export const LockRangeResponse = z.object({
   locked: z.int().nonnegative(),

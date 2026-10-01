@@ -431,6 +431,17 @@ export const endpoints = {
     response: ClientDetail,
     errors: ['NOT_FOUND'],
   }),
+  'trainer.clients.sessions': def({
+    method: 'GET',
+    path: '/trainer/clients/:id/sessions',
+    access: 'TRAINER',
+    summary:
+      "A client's practices: upcoming (live, not ended; soonest first) or past (ended or cancelled; newest first, max 100)",
+    params: IdParams,
+    query: ClientSessionsQuery,
+    response: z.array(TrainerPractice),
+    errors: ['NOT_FOUND'],
+  }),
 
   // ------------------------------------------------------------------ trainer: packages
   'trainer.packages.listForClient': def({

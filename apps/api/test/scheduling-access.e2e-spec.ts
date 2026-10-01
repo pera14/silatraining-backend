@@ -6,7 +6,7 @@ import { addPackage, addSlot, type Api, clientOf, local, trainer } from './sched
 
 /** Every endpoint Agent A serves (feat/scheduling), taken from the contract registry so none is missed. */
 const AGENT_A =
-  /^(trainer\.(today|calendar|slots\..+|slotSeries\..+|sessions\..+|clients\.(list|get|update)|packages\..+|packageTypes\..+)|client\.(home|slots|sessions\..+|packages))$/;
+  /^(trainer\.(today|calendar|slots\..+|slotSeries\..+|sessions\..+|clients\.(list|get|update|sessions)|packages\..+|packageTypes\..+)|client\.(home|slots|sessions\..+|packages))$/;
 const KEYS = (Object.keys(endpoints) as EndpointKey[]).filter((k) => AGENT_A.test(k));
 
 const RANGE = { from: '2026-10-05T00:00:00Z', to: '2026-10-12T00:00:00Z' };
@@ -42,8 +42,8 @@ describe('scheduling access control (e2e)', () => {
     ctx.clock.set('2026-10-05T08:00:00Z');
   });
 
-  it('covers all 33 Agent A endpoints', () => {
-    expect(KEYS).toHaveLength(33);
+  it('covers all 34 scheduling endpoints', () => {
+    expect(KEYS).toHaveLength(34);
   });
 
   it.each(KEYS)(
@@ -129,6 +129,7 @@ describe('scheduling access control (e2e)', () => {
       ['trainer.sessions.cancel', (i) => [i.session!, {}]],
       ['trainer.clients.get', (i) => [i.client!]],
       ['trainer.clients.update', (i) => [i.client!, { archived: true }]],
+      ['trainer.clients.sessions', (i) => [i.client!]],
       ['trainer.packages.listForClient', (i) => [i.client!]],
       [
         'trainer.packages.create',

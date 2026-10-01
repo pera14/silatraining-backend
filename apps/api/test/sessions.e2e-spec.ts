@@ -694,4 +694,52 @@ describe('practices (e2e)', () => {
       await w.client.api.get('/client/sessions?scope=nope').expect(400);
     });
   });
+
+  describe('GET /trainer/clients/:id/sessions', () => {
+    it("lists one client's practices: upcoming soonest first, past (ended or cancelled) newest first", async () => {
+      const w = await world(ctx);
+      const other = await clientOf(ctx, w.trainer.user.id, { firstName: 'Luka' });
+      const old = await addSlot(ctx, w.trainer.user.id, local('2026-07-01', '18:00')); // > 62 days back
+      const past = await addSlot(ctx, w.trainer.user.id, local('2026-10-02', '18:00'));
+      const soon = await addSlot(ctx, w.trainer.user.id, local('2026-10-06', '12:00'));
+      const cancelled = await addSlot(ctx, w.trainer.user.id, local('2026-10-07', '12:00'));
+      const later = await addSlot(ctx, w.trainer.user.id, local('2026-10-08', '12:00'));
+      const notMine = await addSlot(ctx, w.trainer.user.id, local('2026-10-09', '12:00'));
+      const book = async (slotId: string, clientId = w.client.user.id) =>
+        (
+          await w.trainer.api
+            .post('/trainer/sessions')
+            .send({ slotId, clientId, withoutPackage: true })
+            .expect(201)
+        ).body as TrainerPractice;
+      for (const s of [old, past, soon, later]) await book(s.id);
+      const toCancel = await book(cancelled.id);
+      await w.trainer.api.post(`/trainer/sessions/${toCancel.id}/cancel`).send({}).expect(200);
+      await book(notMine.id, other.user.id);
+
+      const url = `/trainer/clients/${w.client.user.id}/sessions`;
+      const upcoming = z
+        .array(TrainerPractice)
+        .parse((await w.trainer.api.get(url).expect(200)).body);
+      expect(upcoming.map((p) => p.startsAt)).toEqual([
+        soon.startsAt.toISOString(),
+        later.startsAt.toISOString(),
+      ]);
+      const history = z
+        .array(TrainerPractice)
+        .parse((await w.trainer.api.get(`${url}?scope=past`).expect(200)).body);
+      expect(history.map((p) => [p.startsAt, p.status])).toEqual([
+        [cancelled.startsAt.toISOString(), 'CANCELLED'],
+        [past.startsAt.toISOString(), 'BOOKED'],
+        [old.startsAt.toISOString(), 'BOOKED'],
+      ]);
+      expect(history.every((p) => p.client.id === w.client.user.id)).toBe(true);
+    });
+
+    it("is 404 for another trainer's client", async () => {
+      const w = await world(ctx);
+      const stranger = await trainer(ctx, 'Jovana');
+      await stranger.api.get(`/trainer/clients/${w.client.user.id}/sessions`).expect(404);
+    });
+  });
 });

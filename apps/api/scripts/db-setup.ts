@@ -6,7 +6,7 @@
  * Connects to your local PostgreSQL 16 as a superuser (default: your OS user on localhost:5432, as with
  * Homebrew's `brew services start postgresql@16`; override with PG_ADMIN_URL) and creates:
  *   - role `sila` (password `sila`, CREATEDB)
- *   - databases `sila` (dev) and `sila_test` (e2e), owned by `sila`
+ *   - databases `sila` (dev), `sila_test` (API e2e) and `sila_e2e` (web real-stack e2e), owned by `sila`
  *   - the `btree_gist` extension in both (needs superuser; the `sila` role cannot create extensions)
  */
 import { config } from 'dotenv';
@@ -17,7 +17,7 @@ config({ path: ['.env', '../../.env'], quiet: true });
 const ADMIN_URL = process.env.PG_ADMIN_URL ?? 'postgresql://localhost:5432/postgres';
 const ROLE = 'sila';
 const PASSWORD = 'sila';
-const DATABASES = ['sila', 'sila_test'];
+const DATABASES = ['sila', 'sila_test', 'sila_e2e'];
 
 async function withClient<T>(url: string, fn: (c: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: url });

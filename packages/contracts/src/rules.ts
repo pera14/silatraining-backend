@@ -8,5 +8,7 @@ export const RULES = {
   maxExtensionWeeks: 5,
   lowPracticesThreshold: 2,
   expiringWithinDays: 5,
+  /** Longest `from..to` window of a calendar or slots query. */
+  maxRangeDays: 62,
   timezone: 'Europe/Belgrade',
 } as const;

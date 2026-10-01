@@ -26,7 +26,7 @@ import {
   TRAINER_PRACTICE_INCLUDE,
 } from './session-mappers';
 
-/** Past practices returned by `GET /client/sessions?scope=past` (newest first). */
+/** Past practices returned by `GET /client/sessions?scope=past` and the trainer's per-client list (newest first). */
 const PAST_LIMIT = 100;
 
 @Injectable()
@@ -215,6 +215,29 @@ export class SessionsService {
    * `upcoming`: non-cancelled practices that have not ended, soonest first.
    * `past`: practices that have ended (any status), newest first. Cancelled future practices appear in neither.
    */
+  /**
+   * A client's practices for the trainer's client detail: `upcoming` = live practices that have not ended (soonest
+   * first); `past` = ended or cancelled ones (newest first, capped like the client's own history).
+   */
+  async trainerClientSessions(
+    trainerId: string,
+    clientId: string,
+    query: EndpointQuery<'trainer.clients.sessions'>,
+  ): Promise<TrainerPractice[]> {
+    await this.ownership.assertTrainerOwnsClient(trainerId, clientId, { includeArchived: true });
+    const now = this.clock.now();
+    const upcoming = (query.scope ?? 'upcoming') === 'upcoming';
+    const rows = await this.prisma.session.findMany({
+      where: upcoming
+        ? { trainerId, clientId, endsAt: { gt: now }, status: { not: 'CANCELLED' } }
+        : { trainerId, clientId, OR: [{ endsAt: { lte: now } }, { status: 'CANCELLED' }] },
+      include: TRAINER_PRACTICE_INCLUDE,
+      orderBy: [{ startsAt: upcoming ? 'asc' : 'desc' }, { createdAt: 'asc' }],
+      take: upcoming ? undefined : PAST_LIMIT,
+    });
+    return rows.map(toTrainerPractice);
+  }
+
   async clientList(
     clientId: string,
     query: EndpointQuery<'client.sessions.list'>,

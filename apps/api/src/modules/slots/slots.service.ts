@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { RULES } from '@sila/contracts';
 import type {
   CalendarResponse,
   ClientSlot,
@@ -22,7 +23,7 @@ import { findOverlaps, isValidSlotStart, localSlotStart, SLOT_MS, slotEnd } from
 import { LIVE_SESSION, TRAINER_SLOT_INCLUDE, toTrainerSlot } from './slot-mappers';
 
 /** Longest range the calendar / client slot endpoints serve in one call (a month view plus padding). */
-const MAX_RANGE_DAYS = 62;
+const MAX_RANGE_DAYS = RULES.maxRangeDays;
 
 @Injectable()
 export class SlotsService {

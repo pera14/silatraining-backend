@@ -18,18 +18,18 @@ Internal paths match the spec (`apps/api/src/modules/...`), so SPEC §8/§9 prom
 
 ## Commands (repo root)
 
-| Command                                        | What                                                                                                                                                     |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`                                 | install (Node 22, pnpm 10)                                                                                                                               |
-| `pnpm db:setup`                                | **once**: creates role `sila` + databases `sila` / `sila_test` in your local PostgreSQL 16 (e.g. `brew services start postgresql@16`). No Docker needed. |
-| `pnpm dev`                                     | build contracts → migrate → contracts watcher + API on :3000 (watch), against local Postgres                                                             |
-| `pnpm dev:docker`                              | optional: same, but Postgres/MinIO/Mailpit in Docker (`infra/docker-compose.dev.yml`)                                                                    |
-| `pnpm db:seed`                                 | wipe + seed dev data (prints logins + join URLs; password `Sila-dev-2026!`)                                                                              |
-| `pnpm lint` / `pnpm typecheck` / `pnpm format` | static checks                                                                                                                                            |
-| `pnpm test`                                    | unit tests (contracts: Vitest, api: Jest)                                                                                                                |
-| `pnpm test:e2e`                                | API e2e (Supertest). Uses `TEST_DATABASE_URL` (local `sila_test`, schema reset each run); if unset, Postgres 16 in Testcontainers (CI)                   |
-| `pnpm start:e2e`                               | migrate + seed + build + start (used by the frontend's real-stack Playwright; no Docker)                                                                 |
-| `pnpm infra:up` / `infra:down`                 | optional Docker containers only                                                                                                                          |
+| Command                                        | What                                                                                                                                                                  |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`                                 | install (Node 22, pnpm 10)                                                                                                                                            |
+| `pnpm db:setup`                                | **once**: creates role `sila` + databases `sila` / `sila_test` / `sila_e2e` in your local PostgreSQL 16 (e.g. `brew services start postgresql@16`). No Docker needed. |
+| `pnpm dev`                                     | build contracts → migrate → contracts watcher + API on :3000 (watch), against local Postgres                                                                          |
+| `pnpm dev:docker`                              | optional: same, but Postgres/MinIO/Mailpit in Docker (`infra/docker-compose.dev.yml`)                                                                                 |
+| `pnpm db:seed`                                 | wipe + seed dev data (prints logins + join URLs; password `Sila-dev-2026!`)                                                                                           |
+| `pnpm lint` / `pnpm typecheck` / `pnpm format` | static checks                                                                                                                                                         |
+| `pnpm test`                                    | unit tests (contracts: Vitest, api: Jest)                                                                                                                             |
+| `pnpm test:e2e`                                | API e2e (Supertest). Uses `TEST_DATABASE_URL` (local `sila_test`, schema reset each run); if unset, Postgres 16 in Testcontainers (CI)                                |
+| `pnpm start:e2e`                               | migrate + seed + build + start (used by the frontend's real-stack Playwright; no Docker)                                                                              |
+| `pnpm infra:up` / `infra:down`                 | optional Docker containers only                                                                                                                                       |
 
 API docs (dev): http://localhost:3000/api/docs · health: `/api/health`.
 **Emails:** with `SMTP_HOST` empty (default locally) `MAIL_TRANSPORT=log` prints every email, e.g. the password-reset link,

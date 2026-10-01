@@ -14,6 +14,7 @@ class TrainerCancelDto extends bodyDto('trainer.sessions.cancel') {}
 class TodayQueryDto extends queryDto('trainer.today') {}
 class ClientBookDto extends bodyDto('client.sessions.create') {}
 class ClientSessionsQueryDto extends queryDto('client.sessions.list') {}
+class TrainerClientSessionsQueryDto extends queryDto('trainer.clients.sessions') {}
 
 @ApiTags('sessions')
 @ApiBearerAuth()
@@ -69,6 +70,16 @@ export class SessionsController {
     @Body() body: TrainerCancelDto,
   ): Promise<TrainerPractice> {
     return this.sessions.trainerCancel(user.id, id, body);
+  }
+
+  @Roles('TRAINER')
+  @Get('trainer/clients/:id/sessions')
+  trainerClientSessions(
+    @CurrentUser() user: AuthUser,
+    @Param() { id }: IdParams,
+    @Query() query: TrainerClientSessionsQueryDto,
+  ): Promise<TrainerPractice[]> {
+    return this.sessions.trainerClientSessions(user.id, id, query);
   }
 
   // ------------------------------------------------------------------ client
