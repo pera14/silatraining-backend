@@ -43,7 +43,7 @@
     "ical-generator": "^11.1.2",
     "luxon": "^3.7.0",
     "nestjs-zod": "^5.5.0",
-    "nodemailer": "^7.0.0",
+    "nodemailer": "^10.0.9",
     "pg": "^8.16.0",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
