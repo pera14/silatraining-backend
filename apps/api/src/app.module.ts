@@ -28,6 +28,7 @@ import { SessionsModule } from './modules/sessions/sessions.module';
 import { SlotsModule } from './modules/slots/slots.module';
 // Agent B (feat/content)
 import { CalendarFeedModule } from './modules/calendar-feed/calendar-feed.module';
+import { ClientDataModule } from './modules/client-data/client-data.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { ExercisesModule } from './modules/exercises/exercises.module';
 import { NotesModule } from './modules/notes/notes.module';
@@ -62,6 +63,8 @@ import { PlansModule } from './modules/plans/plans.module';
     DocumentsModule,
     NotificationsModule,
     CalendarFeedModule,
+    // integration (SPEC §7 privacy)
+    ClientDataModule,
   ],
   providers: [
     // Order matters: rate limit, then authenticate, then authorize.

@@ -8,6 +8,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { Readable } from 'node:stream';
 import { AppConfig } from '../../config/app-config.service';
 
 export interface PresignedUrl {
@@ -29,33 +30,44 @@ export const DOWNLOAD_URL_TTL_SECONDS = 60;
  * encryption (infra's `minio-init`); the API never proxies file bytes, it only hands out short-lived presigned
  * URLs, so no object is ever publicly readable.
  *
- * Presigned URLs embed `S3_ENDPOINT`, so it must be the address browsers use (prod: `https://files.<domain>`
- * through Caddy, SPEC §7); the API reaches MinIO through the same address.
+ * Two clients, same credentials:
+ *  - `s3` talks to `S3_ENDPOINT` for server-side calls (HEAD/DELETE). In prod that is `http://minio:9000` on the
+ *    internal Docker network, so the API never hairpins through the public internet.
+ *  - `presigner` only signs URLs (offline, never sends a request) for `S3_PUBLIC_ENDPOINT`, the address browsers
+ *    use (prod: `https://files.<domain>` through Caddy, SPEC §7). SigV4 signs the Host header, so the proxy must
+ *    forward that host unchanged. Without `S3_PUBLIC_ENDPOINT` both use `S3_ENDPOINT` (dev, e2e).
  */
 @Injectable()
 export class StorageService implements OnModuleDestroy {
   private readonly s3: S3Client;
+  private readonly presigner: S3Client;
   readonly bucket: string;
 
   constructor(config: AppConfig) {
     this.bucket = config.get('S3_BUCKET');
-    this.s3 = new S3Client({
-      endpoint: config.get('S3_ENDPOINT'),
-      region: config.get('S3_REGION'),
-      credentials: {
-        accessKeyId: config.get('S3_ACCESS_KEY'),
-        secretAccessKey: config.get('S3_SECRET_KEY'),
-      },
-      // MinIO serves buckets as a path, not as a subdomain.
-      forcePathStyle: true,
-      // Newer SDKs add a CRC32 checksum to every PutObject by default, which a presigned browser PUT cannot send.
-      requestChecksumCalculation: 'WHEN_REQUIRED',
-      responseChecksumValidation: 'WHEN_REQUIRED',
-    });
+    const endpoint = config.get('S3_ENDPOINT');
+    const publicEndpoint = config.get('S3_PUBLIC_ENDPOINT') ?? endpoint;
+    const client = (url: string) =>
+      new S3Client({
+        endpoint: url,
+        region: config.get('S3_REGION'),
+        credentials: {
+          accessKeyId: config.get('S3_ACCESS_KEY'),
+          secretAccessKey: config.get('S3_SECRET_KEY'),
+        },
+        // MinIO serves buckets as a path, not as a subdomain.
+        forcePathStyle: true,
+        // Newer SDKs add a CRC32 checksum to every PutObject by default, which a presigned browser PUT cannot send.
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
+      });
+    this.s3 = client(endpoint);
+    this.presigner = publicEndpoint === endpoint ? this.s3 : client(publicEndpoint);
   }
 
   onModuleDestroy(): void {
     this.s3.destroy();
+    if (this.presigner !== this.s3) this.presigner.destroy();
   }
 
   /**
@@ -70,7 +82,7 @@ export class StorageService implements OnModuleDestroy {
   }): Promise<PresignedUrl> {
     const expiresIn = opts.expiresIn ?? UPLOAD_URL_TTL_SECONDS;
     const url = await getSignedUrl(
-      this.s3,
+      this.presigner,
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: opts.key,
@@ -91,7 +103,7 @@ export class StorageService implements OnModuleDestroy {
   }): Promise<PresignedUrl> {
     const expiresIn = opts.expiresIn ?? DOWNLOAD_URL_TTL_SECONDS;
     const url = await getSignedUrl(
-      this.s3,
+      this.presigner,
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: opts.key,
@@ -117,6 +129,17 @@ export class StorageService implements OnModuleDestroy {
   /** Removes an object. Idempotent: deleting a missing key succeeds (S3 semantics). */
   async delete(key: string): Promise<void> {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  /** The object's bytes as a Node stream (server-side reads, e.g. the client data export), or null when missing. */
+  async read(key: string): Promise<Readable | null> {
+    try {
+      const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      return res.Body instanceof Readable ? res.Body : null;
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
   }
 }
 

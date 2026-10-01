@@ -22,7 +22,14 @@ export const EnvSchema = z.object({
   /** Requests per minute per IP on login / register / accept / forgot. */
   AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(5),
 
+  /** Where the API reaches the S3 API (prod: `http://minio:9000` on the internal Docker network). */
   S3_ENDPOINT: z.url(),
+  /**
+   * Origin embedded in presigned URLs, i.e. the address browsers use (prod: `https://files.<domain>` via Caddy).
+   * SigV4 signs the Host header, so the proxy in front of MinIO must forward this host unchanged.
+   * Empty/unset = S3_ENDPOINT (dev: the API and the browser both use http://localhost:9000).
+   */
+  S3_PUBLIC_ENDPOINT: emptyAsUndefined(z.url().optional()),
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),

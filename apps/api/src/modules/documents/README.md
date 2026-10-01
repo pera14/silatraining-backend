@@ -16,8 +16,9 @@ Trainer-only client documents (SPEC §4, §7) on a private MinIO/S3 bucket with 
 - Keys are `documents/<clientId>/<documentId>` (UUIDs only). Audit `meta` holds ids only, never file names.
 - Archived clients' documents stay reachable for their trainer; anything of another trainer is 404.
 
-**`S3_ENDPOINT` must be the URL browsers can reach** (it is embedded in presigned URLs): dev `http://localhost:9000`,
-prod `https://files.<domain>` via Caddy (SPEC §7); the API talks to MinIO through the same address.
+**Presigned URLs are signed for `S3_PUBLIC_ENDPOINT`**, the address browsers reach (prod `https://files.<domain>`
+via Caddy, SPEC §7), while the API itself talks to MinIO at `S3_ENDPOINT` (prod `http://minio:9000`). With
+`S3_PUBLIC_ENDPOINT` unset (dev, e2e) both are `S3_ENDPOINT`, e.g. `http://localhost:9000`.
 
 Tests: `test/documents.e2e-spec.ts` runs against a real MinIO (Testcontainers `pgsty/minio`, started in
 `test/setup/global-setup.ts`). To reuse a running MinIO instead (e.g. `pnpm infra:up`), set `TEST_S3_ENDPOINT`

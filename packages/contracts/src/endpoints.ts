@@ -92,8 +92,8 @@ export interface EndpointDef {
   response: z.ZodType;
   /** 200 unless stated. 204 responses have no body (`NoContent`). */
   status?: 200 | 201 | 204;
-  /** `text` for non-JSON responses (the iCal feed). */
-  responseType?: 'json' | 'text';
+  /** `text` for non-JSON text (the iCal feed), `blob` for file downloads (the client data export). */
+  responseType?: 'json' | 'text' | 'blob';
   /** Domain errors this endpoint may return, beyond the generic VALIDATION_FAILED / UNAUTHORIZED / FORBIDDEN / RATE_LIMITED. */
   errors: readonly ErrorCode[];
 }
@@ -429,6 +429,28 @@ export const endpoints = {
     params: IdParams,
     body: UpdateClientRequest,
     response: ClientDetail,
+    errors: ['NOT_FOUND'],
+  }),
+  'trainer.clients.export': def({
+    method: 'GET',
+    path: '/trainer/clients/:id/export',
+    access: 'TRAINER',
+    summary:
+      'Export all of a client’s data as a zip (data.json + their documents). Audit-logged. SPEC §7',
+    params: IdParams,
+    response: z.custom<Blob>(),
+    responseType: 'blob',
+    errors: ['NOT_FOUND'],
+  }),
+  'trainer.clients.delete': def({
+    method: 'DELETE',
+    path: '/trainer/clients/:id',
+    access: 'TRAINER',
+    summary:
+      'Delete a client for good: their account, practices, packages, notes, plans and document files. SPEC §7',
+    params: IdParams,
+    response: NoContent,
+    status: 204,
     errors: ['NOT_FOUND'],
   }),
   'trainer.clients.sessions': def({
