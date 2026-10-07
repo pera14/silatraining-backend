@@ -254,6 +254,107 @@ describe('slots and series (e2e)', () => {
     });
   });
 
+  describe('one client, one practice at a time (409 CLIENT_BUSY)', () => {
+    const book = (t: Awaited<ReturnType<typeof trainer>>, slotId: string, clientId: string) =>
+      t.api.post('/trainer/sessions').send({ slotId, clientId, withoutPackage: true });
+
+    it('refuses an overlapping practice for the same client; other clients and back-to-back are fine', async () => {
+      const w = await world(ctx);
+      const other = await clientOf(ctx, w.trainer.user.id);
+      const t = w.trainer;
+      const c = w.client.user.id;
+      const at8 = await addSlot(ctx, t.user.id, local('2026-10-06', '08:00'));
+      const at830 = await addSlot(ctx, t.user.id, local('2026-10-06', '08:30'), { parallel: true });
+      const at9 = await addSlot(ctx, t.user.id, local('2026-10-06', '09:00'));
+
+      await book(t, at8.id, c).expect(201);
+      const busy = await book(t, at830.id, c).expect(409);
+      expect(busy.body.code).toBe('CLIENT_BUSY');
+      await book(t, at830.id, other.user.id).expect(201);
+      await book(t, at9.id, c).expect(201); // starts as 08:00 ends
+
+      // a cancelled practice no longer blocks
+      const first = await ctx.prisma.session.findFirstOrThrow({ where: { slotId: at8.id } });
+      await t.api.post(`/trainer/sessions/${first.id}/cancel`).send({}).expect(200);
+      const spare = await addSlot(ctx, t.user.id, local('2026-10-06', '08:00'), { parallel: true });
+      await book(t, spare.id, c).expect(201);
+    });
+
+    it('applies to clients booking themselves and to moves', async () => {
+      const w = await world(ctx);
+      const t = w.trainer;
+      const c = w.client.user.id;
+      const parallel = await addSlot(ctx, t.user.id, local('2026-10-06', '08:30'), {
+        parallel: true,
+      });
+      const regular = await addSlot(ctx, t.user.id, local('2026-10-06', '09:00'));
+      const later = await addSlot(ctx, t.user.id, local('2026-10-06', '11:00'));
+      await book(t, parallel.id, c).expect(201);
+
+      const self = await w.client.api
+        .post('/client/sessions')
+        .send({ slotId: regular.id })
+        .expect(409);
+      expect(self.body.code).toBe('CLIENT_BUSY');
+
+      const p11 = (await book(t, later.id, c).expect(201)).body;
+      const moved = await t.api
+        .post(`/trainer/sessions/${p11.id}/move`)
+        .send({ slotId: regular.id })
+        .expect(409);
+      expect(moved.body.code).toBe('CLIENT_BUSY');
+
+      // moving within its own window ignores the practice being moved
+      const p830 = await ctx.prisma.session.findFirstOrThrow({ where: { slotId: parallel.id } });
+      const nine = await addSlot(ctx, t.user.id, local('2026-10-06', '09:30'), { parallel: true });
+      await t.api.post(`/trainer/sessions/${p830.id}/move`).send({ slotId: nine.id }).expect(200);
+    });
+
+    it('serializes concurrent bookings of the same client into overlapping slots', async () => {
+      const w = await world(ctx);
+      const t = w.trainer;
+      const a = await addSlot(ctx, t.user.id, local('2026-10-06', '08:00'));
+      const b = await addSlot(ctx, t.user.id, local('2026-10-06', '08:30'), { parallel: true });
+      const results = await Promise.all([
+        book(t, a.id, w.client.user.id),
+        book(t, b.id, w.client.user.id),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    });
+
+    it('autoBook skips a day the client is already busy', async () => {
+      const t = await trainer(ctx);
+      const c = await clientOf(ctx, t.user.id);
+      await t.api
+        .post('/trainer/slot-series')
+        .send({
+          weekdays: [2],
+          startTime: '07:00',
+          validFrom: '2026-10-06',
+          validUntil: '2026-10-20',
+          reservedForClientId: c.user.id,
+          autoBook: true,
+        })
+        .expect(201);
+      // no package yet, so nothing is auto-booked; the trainer books Tue 6 Oct 07:30 by hand
+      const extra = await addSlot(ctx, t.user.id, local('2026-10-06', '07:30'), { parallel: true });
+      await book(t, extra.id, c.user.id).expect(201);
+
+      // the new package triggers autoBook: 6 Oct overlaps the 07:30 practice and is skipped
+      await t.api
+        .post(`/trainer/clients/${c.user.id}/packages`)
+        .send({ name: 'October', totalPractices: 10, validFrom: '2026-10-01' })
+        .expect(201);
+      const auto = await ctx.prisma.session.findMany({
+        where: { clientId: c.user.id, slot: { seriesId: { not: null } } },
+        orderBy: { startsAt: 'asc' },
+      });
+      expect(auto.map((s) => s.startsAt.toISOString())).toEqual(
+        ['2026-10-13', '2026-10-20'].map((d) => local(d, '07:00').toISOString()),
+      );
+    });
+  });
+
   describe('PATCH/DELETE /trainer/slots/:id and lock-range', () => {
     it('locks with a reason, unlocks (clearing it) and reserves for own clients only', async () => {
       const w = await world(ctx);

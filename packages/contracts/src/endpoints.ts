@@ -370,7 +370,7 @@ export const endpoints = {
     body: CreateTrainerSessionRequest,
     response: TrainerPractice,
     status: 201,
-    errors: ['NOT_FOUND', 'NO_PACKAGE', 'SLOT_TAKEN'],
+    errors: ['NOT_FOUND', 'NO_PACKAGE', 'SLOT_TAKEN', 'CLIENT_BUSY'],
   }),
   'trainer.sessions.update': def({
     method: 'PATCH',
@@ -390,7 +390,7 @@ export const endpoints = {
     params: IdParams,
     body: MoveSessionRequest,
     response: TrainerPractice,
-    errors: ['NOT_FOUND', 'SLOT_TAKEN', 'INVALID_STATE'],
+    errors: ['NOT_FOUND', 'SLOT_TAKEN', 'INVALID_STATE', 'CLIENT_BUSY'],
   }),
   'trainer.sessions.cancel': def({
     method: 'POST',
@@ -814,7 +814,7 @@ export const endpoints = {
     body: ClientBookRequest,
     response: ClientPractice,
     status: 201,
-    errors: ['NOT_FOUND', 'NO_PACKAGE', 'SLOT_TAKEN', 'BOOKING_CUTOFF'],
+    errors: ['NOT_FOUND', 'NO_PACKAGE', 'SLOT_TAKEN', 'BOOKING_CUTOFF', 'CLIENT_BUSY'],
   }),
   'client.sessions.list': def({
     method: 'GET',

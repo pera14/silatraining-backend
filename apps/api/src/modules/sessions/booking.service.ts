@@ -137,6 +137,7 @@ export class BookingService {
       if (!slot || slot.trainerId !== opts.trainerId)
         throw new DomainError('NOT_FOUND', 'Slot not found');
       await this.assertSlotFree(tx, slot.id);
+      await this.assertClientFree(tx, session.clientId, slot.startsAt, slot.endsAt, session.id);
       const moved = await this.translateTaken(() =>
         tx.session.update({
           where: { id: session.id },
@@ -173,6 +174,7 @@ export class BookingService {
       if (!visible) throw new DomainError('NOT_FOUND', 'Slot not found');
     }
     await this.assertSlotFree(tx, slot.id);
+    await this.assertClientFree(tx, req.clientId, slot.startsAt, slot.endsAt);
     if (
       req.bookedBy === 'CLIENT' &&
       !isAtLeastHoursBefore(slot.startsAt, now, this.config.get('BOOKING_CUTOFF_HOURS'))
@@ -270,6 +272,33 @@ export class BookingService {
       select: { id: true },
     });
     if (live) throw new DomainError('SLOT_TAKEN');
+  }
+
+  /**
+   * A client can't be in two practices at once. Since parallel slots let a trainer's slots overlap, check the
+   * client's live practices against [startsAt, endsAt) (back-to-back is fine). A per-client advisory lock makes
+   * concurrent bookings of the same client wait for each other: `withoutPackage` bookings skip the package row
+   * lock, and two different slots don't lock each other.
+   */
+  private async assertClientFree(
+    tx: PrismaTx,
+    clientId: string,
+    startsAt: Date,
+    endsAt: Date,
+    ignoreSessionId?: string,
+  ): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`sessions:${clientId}`}, 0))`;
+    const clash = await tx.session.findFirst({
+      where: {
+        clientId,
+        status: { not: 'CANCELLED' },
+        startsAt: { lt: endsAt },
+        endsAt: { gt: startsAt },
+        ...(ignoreSessionId && { id: { not: ignoreSessionId } }),
+      },
+      select: { id: true },
+    });
+    if (clash) throw new DomainError('CLIENT_BUSY');
   }
 
   private async translateTaken<T>(write: () => Promise<T>): Promise<T> {

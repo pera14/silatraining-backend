@@ -6,7 +6,13 @@ import { Clock } from '../sessions/clock';
 import { LIVE_SESSION } from './slot-mappers';
 
 /** Booking outcomes that just mean "not this slot": skip it and keep going. */
-const SKIPPABLE = new Set(['NO_PACKAGE', 'SLOT_TAKEN', 'NOT_FOUND', 'BOOKING_CUTOFF']);
+const SKIPPABLE = new Set([
+  'NO_PACKAGE',
+  'SLOT_TAKEN',
+  'NOT_FOUND',
+  'BOOKING_CUTOFF',
+  'CLIENT_BUSY',
+]);
 
 /**
  * autoBook (SPEC §4): a series reserved for a client with `autoBook` books its future slots for that client
