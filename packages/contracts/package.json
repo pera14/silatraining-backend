@@ -41,7 +41,7 @@
     "build:clean": "rm -rf dist && tsup"
   },
   "dependencies": {
-    "zod": "^4.6.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "tsup": "^8.5.0",
